@@ -38,8 +38,8 @@ import isaaclab.envs.mdp as mdp
 # Paths and design-level constants
 ##
 
-TERRAIN_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/terrain.usd"
-ROBOT_URDF_PATH = "/home/sejong/WS/Hugo_Multi/usd files/hugo_hexapod.urdf"
+TERRAIN_USD_PATH = "/home/ubin/Hugo_Project/usd files/terrain.usd"
+ROBOT_URDF_PATH = "/home/ubin/Hugo_Project/usd files/hugo_hexapod.urdf"
 
 # URDF 분석 기준:
 # base_link에서 발바닥까지 약 1.02 m 정도이므로, 목표 몸체 높이를 1.05 m 근처로 둔다.
@@ -48,7 +48,7 @@ TARGET_BODY_HEIGHT = 1.05
 
 # 초기 spawn 높이.
 # 복합 지형에서 약간의 요철/경사를 고려하여 목표 높이보다 조금 높게 시작.
-INITIAL_BODY_HEIGHT = 1.10
+INITIAL_BODY_HEIGHT = 1.75
 
 # 현재 단계에서는 센서 없이 1차 locomotion 학습을 안정화하는 것이 목적.
 # 계획서상 50 Hz action period에 맞추기 위해 sim.dt=1/200, decimation=4를 사용.
@@ -257,14 +257,14 @@ class ActionsCfg:
     prismatic_pos = mdp.JointPositionActionCfg(
         asset_name="robot",
         joint_names=[".*prismatic.*"],
-        scale=0.03,
+        scale=0.00,
         use_default_offset=True,
     )
 
     revolute_pos = mdp.JointPositionActionCfg(
         asset_name="robot",
         joint_names=[".*joint.*"],
-        scale=0.10,
+        scale=0.3,
         use_default_offset=True,
     )
 
@@ -451,7 +451,7 @@ class RewardsCfg:
     # velocity tracking
     track_lin_vel_xy = RewTerm(
         func=mdp.track_lin_vel_xy_exp,
-        weight=1.0,
+        weight=2.0,
         params={
             "command_name": "base_velocity",
             "std": math.sqrt(0.25),
@@ -472,7 +472,7 @@ class RewardsCfg:
     #     r_height = -alpha * (z_body - z_target)^2
     body_height_error_l2 = RewTerm(
         func=body_height_error_l2,
-        weight=-0.5,
+        weight=-0.3,
         params={
             "target_height": TARGET_BODY_HEIGHT,
             "asset_cfg": SceneEntityCfg("robot"),
@@ -494,7 +494,7 @@ class RewardsCfg:
     # vertical fluctuation penalty: suppress bouncing motion
     lin_vel_z_l2 = RewTerm(
         func=mdp.lin_vel_z_l2,
-        weight=-1.0,
+        weight=-0.25,
     )
 
     # roll/pitch angular velocity penalty
@@ -506,7 +506,7 @@ class RewardsCfg:
     # posture stability: keep body flat
     flat_orientation_l2 = RewTerm(
         func=mdp.flat_orientation_l2,
-        weight=-0.5,
+        weight=-0.25,
     )
 
     # smoothness
