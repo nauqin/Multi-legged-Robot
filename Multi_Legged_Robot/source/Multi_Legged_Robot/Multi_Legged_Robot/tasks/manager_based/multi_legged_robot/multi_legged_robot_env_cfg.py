@@ -44,7 +44,7 @@ import isaaclab.envs.mdp as mdp
 ##
 
 TERRAIN_USD_PATH = "/home/ubin/Hugo_Project/usd files/terrain.usd"
-ROBOT_URDF_PATH = "/home/ubin/Hugo_Project/usd files/hugo_hexapod.urdf"
+ROBOT_URDF_PATH = "/home/ubin/Hugo_Project/usd files/hugo_hexapod_ver2.urdf"
 
 # Prismatic을 잠깐 사용하지 않는 revolute-only 단계에서는
 # TARGET_BODY_HEIGHT 기반 anti-fluctuation 직접 보상은 제거한다.
