@@ -34,9 +34,12 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
+import isaaclab_tasks.manager_based.locomotion.velocity.mdp as locomotion_mdp
+from isaaclab.terrains import TerrainImporterCfg
 
 # IsaacLab official MDP terms
 import isaaclab.envs.mdp as mdp
+from isaaclab.sensors import ContactSensorCfg
 
 
 ##
@@ -44,7 +47,7 @@ import isaaclab.envs.mdp as mdp
 ##
 
 TERRAIN_USD_PATH = "/home/ubin/Hugo_Project/usd files/terrain.usd"
-ROBOT_URDF_PATH = "/home/ubin/Hugo_Project/usd files/hugo_hexapod_ver2.urdf"
+ROBOT_USD_PATH = "/home/ubin/Hugo_Project/usd files/hugo_hexapod_ver2/hugo_hexapod_ver2.usd"
 
 # Prismatic을 잠깐 사용하지 않는 revolute-only 단계에서는
 # TARGET_BODY_HEIGHT 기반 anti-fluctuation 직접 보상은 제거한다.
@@ -54,7 +57,7 @@ ROBOT_URDF_PATH = "/home/ubin/Hugo_Project/usd files/hugo_hexapod_ver2.urdf"
 # 사용자가 확인한 것처럼 로봇이 terrain에 끼어 튕겨나가는 경우가 있어
 # 초기 spawn 높이는 당분간 높게 유지한다.
 # 단, 너무 높으면 낙하 충격이 커질 수 있으므로 안정화되면 1.20, 1.10 등으로 낮춰 실험 권장.
-INITIAL_BODY_HEIGHT = 1.75
+INITIAL_BODY_HEIGHT = 1.55
 
 # 50 Hz action period: sim.dt=1/200, decimation=4
 SIM_DT = 1.0 / 200.0
@@ -71,33 +74,18 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
 
     # Current mixed terrain USD.
     # If a pure flat terrain USD exists, use it here for first-stage walking training.
-    terrain = AssetBaseCfg(
+    terrain = TerrainImporterCfg(
         prim_path="/World/ground",
-        spawn=sim_utils.UsdFileCfg(
-            usd_path=TERRAIN_USD_PATH,
-        ),
+        terrain_type="plane",
     )
 
     robot = ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
-        spawn=sim_utils.UrdfFileCfg(
-            asset_path=ROBOT_URDF_PATH,
-            make_instanceable=True,
-            fix_base=False,
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=ROBOT_USD_PATH,
 
-            # Contact sensors are intentionally disabled for now.
-            activate_contact_sensors=False,
-
-            # URDF importer requires joint_drive gains.
-            # Actual PD-like behavior is handled by ImplicitActuatorCfg below.
-            joint_drive=sim_utils.UrdfConverterCfg.JointDriveCfg(
-                drive_type="force",
-                target_type="position",
-                gains=sim_utils.UrdfConverterCfg.JointDriveCfg.PDGainsCfg(
-                    stiffness=0.0,
-                    damping=0.0,
-                ),
-            ),
+            # Contact sensors are intentionally disabled -> enable
+            activate_contact_sensors=True,
 
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 max_depenetration_velocity=10.0,
@@ -146,6 +134,13 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
                 velocity_limit_sim=2.0,
             ),
         },
+
+
+    )
+    contact_forces = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/.*", 
+        history_length=3,
+        track_air_time=True,
     )
 
     dome_light = AssetBaseCfg(
@@ -430,10 +425,40 @@ class RewardsCfg:
         weight=-0.05,
     )
 
+    feet_air_time = RewTerm(
+        func=locomotion_mdp.feet_air_time, 
+        weight=0.5,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*feet.*"),
+            "command_name": "base_velocity",
+            "threshold": 0.5,
+        },
+    )
+
+    undesired_contacts = RewTerm(
+        func=locomotion_mdp.undesired_contacts,
+        weight=-1.0,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*(thigh|calf|base).*"), 
+            "threshold": 1.0,
+        },
+    )
+
+    # feet_slide = RewTerm(
+    # func=locomotion_mdp.feet_slide,
+    # weight=-0.1,
+    # params={
+    #     "sensor_cfg": SceneEntityCfg(
+    #         "contact_forces",
+    #         body_names=".*feet.*"
+    #     )
+    # }
+    # )
+
     # posture stability: keep body reasonably flat
     flat_orientation_l2 = RewTerm(
         func=mdp.flat_orientation_l2,
-        weight=-1.0,)
+        weight=-5.0,)#평지에서는 몸통이 평행을 유지하는 것이 중요하므로 ANYmal은 이 패널티를 -5.0으로 아주 강하게 줍니다.
 
     # smoothness
     action_rate_l2 = RewTerm(
