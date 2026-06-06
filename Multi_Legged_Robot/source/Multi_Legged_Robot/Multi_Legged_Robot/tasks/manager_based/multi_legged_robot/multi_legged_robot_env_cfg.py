@@ -43,8 +43,8 @@ import isaaclab.envs.mdp as mdp
 # Paths and design-level constants
 ##
 
-TERRAIN_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/terrain.usd"
-ROBOT_URDF_PATH = "/home/sejong/WS/Hugo_Multi/usd files/hugo_hexapod.urdf"
+TERRAIN_USD_PATH = "/home/ubin/Hugo_Project/usd files/terrain.usd"
+ROBOT_URDF_PATH = "/home/ubin/Hugo_Project/usd files/hugo_hexapod.urdf"
 
 # Prismatic을 잠깐 사용하지 않는 revolute-only 단계에서는
 # TARGET_BODY_HEIGHT 기반 anti-fluctuation 직접 보상은 제거한다.
@@ -194,6 +194,22 @@ class ActionsCfg:
     Only roll/pitch revolute joints are controlled by the policy.
     """
 
+    # Roll 관절 (안정적인 자세 유지용: 0.05)
+    roll_pos = mdp.JointPositionActionCfg(
+        asset_name="robot",
+        joint_names=[".*roll"],
+        scale=0.05,
+        use_default_offset=True,
+    )
+
+    # Pitch 관절 (보행 동작 수행용: 0.2)
+    pitch_pos = mdp.JointPositionActionCfg(
+        asset_name="robot",
+        joint_names=[".*pitch"],
+        scale=0.2,
+        use_default_offset=True,
+    )
+
     # Disabled for first-stage revolute-only walking.
     # prismatic_pos = mdp.JointPositionActionCfg(
     #     asset_name="robot",
@@ -202,12 +218,13 @@ class ActionsCfg:
     #     use_default_offset=True,
     # )
 
-    revolute_pos = mdp.JointPositionActionCfg(
-        asset_name="robot",
-        joint_names=[".*joint.*"],
-        scale=0.15,
-        use_default_offset=True,
-    )
+    # revolute_pos = mdp.JointPositionActionCfg(
+    #     asset_name="robot",
+    #     joint_names=[".*joint.*"],
+    #     scale=0.3,
+    #     use_default_offset=True,
+    # )
+
 
 
 ##
