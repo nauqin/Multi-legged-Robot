@@ -116,6 +116,7 @@ for step in range(args_cli.steps):
             "ang_vel_w",
             "lin_acc_w",
             "ang_acc_w",
+            "projected_gravity_b",
         ]
 
         for name in common_fields:

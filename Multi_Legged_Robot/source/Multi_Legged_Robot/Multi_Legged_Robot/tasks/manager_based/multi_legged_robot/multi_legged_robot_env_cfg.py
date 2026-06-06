@@ -3,15 +3,18 @@
 
 """Configuration for Hugo hexapod manager-based RL environment.
 
-USD-based revolute-only training configuration with contact sensors and IMU.
+USD-based revolute-only training configuration with:
+- foot contact sensor
+- full-body contact sensor
+- IMU sensor
+- IMU-based observations
+- IMU-based stability / anti-fluctuation rewards
 
 Current purpose:
-- load robot from verified USD file
-- enable contact sensors
-- enable IMU sensor on base_link
 - train basic walking using revolute joints first
 - keep prismatic joints near zero
-- keep IMU out of observations/rewards until sensor values are verified
+- use contact sensors to discourage non-foot body contacts
+- use IMU to improve body attitude and dynamic stability
 """
 
 from __future__ import annotations
@@ -47,8 +50,11 @@ ROBOT_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/hugo_hexapod_ver2/hugo_he
 
 INITIAL_BODY_HEIGHT = 1.75
 
+# 200 Hz physics, 50 Hz policy
 SIM_DT = 1.0 / 200.0
 DECIMATION = 4
+
+GRAVITY_MAG = 9.81
 
 
 ##
@@ -71,7 +77,7 @@ NON_FOOT_BODY_NAMES = [
 
 
 ##
-# Custom reward functions
+# Contact reward functions
 ##
 
 def feet_support_count(
@@ -80,6 +86,7 @@ def feet_support_count(
     threshold: float = 5.0,
     min_contacts: int = 3,
 ):
+    """Reward when at least min_contacts feet are in contact."""
     contact_sensor = env.scene[sensor_cfg.name]
     forces_w = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]
     force_norm = torch.norm(forces_w, dim=-1)
@@ -97,6 +104,7 @@ def feet_air_time_reward(
     threshold: float = 0.35,
     command_threshold: float = 0.1,
 ):
+    """Reward feet that stay in the air briefly before making contact."""
     contact_sensor = env.scene[sensor_cfg.name]
 
     first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
@@ -117,6 +125,7 @@ def feet_contact_force_l2(
     sensor_cfg: SceneEntityCfg,
     max_force: float = 600.0,
 ):
+    """Penalty for excessive foot contact force."""
     contact_sensor = env.scene[sensor_cfg.name]
     forces_w = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]
     force_norm = torch.norm(forces_w, dim=-1)
@@ -132,6 +141,7 @@ def undesired_body_contact(
     sensor_cfg: SceneEntityCfg,
     threshold: float = 10.0,
 ):
+    """Penalty when non-foot bodies make contact."""
     contact_sensor = env.scene[sensor_cfg.name]
     forces_w = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]
     force_norm = torch.norm(forces_w, dim=-1)
@@ -147,6 +157,7 @@ def undesired_body_contact_force_l2(
     sensor_cfg: SceneEntityCfg,
     max_force: float = 100.0,
 ):
+    """Penalty for large non-foot body contact force."""
     contact_sensor = env.scene[sensor_cfg.name]
     forces_w = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]
     force_norm = torch.norm(forces_w, dim=-1)
@@ -157,10 +168,120 @@ def undesired_body_contact_force_l2(
     return penalty
 
 
+##
+# IMU observation functions
+##
+
+def imu_ang_vel_b(
+    env,
+    sensor_cfg: SceneEntityCfg,
+):
+    """IMU angular velocity in body frame."""
+    imu = env.scene[sensor_cfg.name]
+    return imu.data.ang_vel_b
+
+
+def imu_projected_gravity_b(
+    env,
+    sensor_cfg: SceneEntityCfg,
+):
+    """Gravity direction projected into body frame from IMU."""
+    imu = env.scene[sensor_cfg.name]
+    return imu.data.projected_gravity_b
+
+
+def imu_lin_acc_residual_b(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    gravity: float = GRAVITY_MAG,
+):
+    """Body-frame dynamic acceleration with gravity component removed.
+
+    At rest:
+        lin_acc_b ≈ [0, 0, 9.81]
+        projected_gravity_b ≈ [0, 0, -1]
+
+    Therefore:
+        residual = lin_acc_b + gravity * projected_gravity_b ≈ 0
+    """
+    imu = env.scene[sensor_cfg.name]
+    residual_acc_b = imu.data.lin_acc_b + gravity * imu.data.projected_gravity_b
+
+    # Normalize to keep observation scale small.
+    return residual_acc_b / gravity
+
+
+##
+# IMU reward functions
+##
+
+def imu_projected_gravity_xy_l2(
+    env,
+    sensor_cfg: SceneEntityCfg,
+):
+    """Penalty for roll/pitch tilt using IMU projected gravity.
+
+    If the body is level:
+        projected_gravity_b ≈ [0, 0, -1]
+    Thus x/y components should be close to zero.
+    """
+    imu = env.scene[sensor_cfg.name]
+    projected_gravity = imu.data.projected_gravity_b
+
+    return torch.sum(projected_gravity[:, :2] ** 2, dim=1)
+
+
+def imu_ang_vel_xy_l2(
+    env,
+    sensor_cfg: SceneEntityCfg,
+):
+    """Penalty for body roll/pitch angular velocity from IMU."""
+    imu = env.scene[sensor_cfg.name]
+    ang_vel_b = imu.data.ang_vel_b
+
+    return torch.sum(ang_vel_b[:, :2] ** 2, dim=1)
+
+
+def imu_dynamic_acc_l2(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    gravity: float = GRAVITY_MAG,
+):
+    """Penalty for dynamic body acceleration after subtracting gravity.
+
+    This is an IMU-based anti-fluctuation-like term.
+    It discourages strong body shaking/bouncing.
+    """
+    imu = env.scene[sensor_cfg.name]
+    residual_acc_b = imu.data.lin_acc_b + gravity * imu.data.projected_gravity_b
+
+    return torch.mean((residual_acc_b / gravity) ** 2, dim=1)
+
+
+def imu_vertical_dynamic_acc_l2(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    gravity: float = GRAVITY_MAG,
+):
+    """Penalty for vertical dynamic acceleration in body frame.
+
+    This focuses more directly on up-down fluctuation.
+    """
+    imu = env.scene[sensor_cfg.name]
+    residual_acc_b = imu.data.lin_acc_b + gravity * imu.data.projected_gravity_b
+
+    return (residual_acc_b[:, 2] / gravity) ** 2
+
+
+##
+# Joint / posture reward functions
+##
+
 def joint_deviation_l2(
     env,
     asset_cfg: SceneEntityCfg,
 ):
+    """Penalty for revolute joints deviating too far from default joint positions."""
     asset = env.scene[asset_cfg.name]
 
     joint_pos = asset.data.joint_pos[:, asset_cfg.joint_ids]
@@ -175,6 +296,10 @@ def contact_force_distribution(
     threshold: float = 5.0,
     max_force: float = 800.0,
 ):
+    """Penalty for uneven force distribution among contacting feet.
+
+    Prepared for the next stage.
+    """
     contact_sensor = env.scene[sensor_cfg.name]
 
     forces_w = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]
@@ -227,8 +352,9 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
                 max_depenetration_velocity=10.0,
             ),
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                # If the robot explodes immediately, set this back to False.
-                enabled_self_collisions=False, # 무조건 False로 설정할 것. 그렇지 않으면 충돌 발생
+                # Keep False.
+                # In this robot, True caused unnatural stretching behavior.
+                enabled_self_collisions=False,
                 solver_position_iteration_count=8,
                 solver_velocity_iteration_count=2,
             ),
@@ -283,9 +409,6 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
     )
 
     # IMU sensor attached to base_link.
-    #
-    # The sensor is attached to the base rigid body.
-    # For now, it is only added to the scene and is not used in observations/rewards.
     imu = ImuCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base_link",
         update_period=0.0,
@@ -295,7 +418,7 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
             pos=(0.0, 0.0, 0.0),
             rot=(1.0, 0.0, 0.0, 0.0),
         ),
-        gravity_bias=(0.0, 0.0, 9.81),
+        gravity_bias=(0.0, 0.0, GRAVITY_MAG),
     )
 
     dome_light = AssetBaseCfg(
@@ -313,6 +436,8 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
 
 @configclass
 class CommandsCfg:
+    """Command specifications for revolute-only walking."""
+
     base_velocity = mdp.UniformVelocityCommandCfg(
         asset_name="robot",
         resampling_time_range=(8.0, 8.0),
@@ -334,6 +459,8 @@ class CommandsCfg:
 
 @configclass
 class ActionsCfg:
+    """Action specifications for revolute-only training."""
+
     revolute_pos = mdp.JointPositionActionCfg(
         asset_name="robot",
         joint_names=[".*joint.*"],
@@ -348,17 +475,62 @@ class ActionsCfg:
 
 @configclass
 class ObservationsCfg:
+    """Observation specifications for the MDP."""
+
     @configclass
     class PolicyCfg(ObsGroup):
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
-        base_ang_vel = ObsTerm(func=mdp.base_ang_vel)
-        projected_gravity = ObsTerm(func=mdp.projected_gravity)
+        """Policy observations.
 
+        IMU is now included in the policy observation.
+
+        Kept:
+        - base linear velocity from simulator state
+        - command
+        - revolute joint position/velocity
+        - previous action
+
+        Replaced / added:
+        - IMU angular velocity
+        - IMU projected gravity
+        - IMU residual linear acceleration
+        """
+
+        # Simulator-state linear velocity is kept for now.
+        # Later, for sim-to-real, this should be replaced by an estimator.
+        base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
+
+        # IMU-based angular velocity.
+        imu_ang_vel_b = ObsTerm(
+            func=imu_ang_vel_b,
+            params={
+                "sensor_cfg": SceneEntityCfg("imu"),
+            },
+        )
+
+        # IMU-based body orientation cue.
+        imu_projected_gravity_b = ObsTerm(
+            func=imu_projected_gravity_b,
+            params={
+                "sensor_cfg": SceneEntityCfg("imu"),
+            },
+        )
+
+        # IMU-based dynamic acceleration cue.
+        imu_lin_acc_residual_b = ObsTerm(
+            func=imu_lin_acc_residual_b,
+            params={
+                "sensor_cfg": SceneEntityCfg("imu"),
+                "gravity": GRAVITY_MAG,
+            },
+        )
+
+        # Command.
         velocity_commands = ObsTerm(
             func=mdp.generated_commands,
             params={"command_name": "base_velocity"},
         )
 
+        # Revolute joint states only.
         joint_pos = ObsTerm(
             func=mdp.joint_pos_rel,
             params={
@@ -394,6 +566,8 @@ class ObservationsCfg:
 
 @configclass
 class EventCfg:
+    """Event terms for reset/randomization."""
+
     reset_base = EventTerm(
         func=mdp.reset_root_state_uniform,
         mode="reset",
@@ -453,6 +627,9 @@ class EventCfg:
 
 @configclass
 class RewardsCfg:
+    """Reward terms for revolute-only walking with contact sensors and IMU."""
+
+    # alive / termination
     is_alive = RewTerm(
         func=mdp.is_alive,
         weight=0.05,
@@ -463,6 +640,7 @@ class RewardsCfg:
         weight=-5.0,
     )
 
+    # velocity tracking
     track_lin_vel_xy = RewTerm(
         func=mdp.track_lin_vel_xy_exp,
         weight=2.5,
@@ -481,6 +659,7 @@ class RewardsCfg:
         },
     )
 
+    # foot contact rewards
     feet_air_time = RewTerm(
         func=feet_air_time_reward,
         weight=0.05,
@@ -511,6 +690,7 @@ class RewardsCfg:
         },
     )
 
+    # non-foot body contact penalties
     undesired_body_contact = RewTerm(
         func=undesired_body_contact,
         weight=-0.3,
@@ -535,6 +715,7 @@ class RewardsCfg:
         },
     )
 
+    # existing simulator-state stabilization terms
     lin_vel_z_l2 = RewTerm(
         func=mdp.lin_vel_z_l2,
         weight=-1.0,
@@ -542,14 +723,50 @@ class RewardsCfg:
 
     ang_vel_xy_l2 = RewTerm(
         func=mdp.ang_vel_xy_l2,
-        weight=-0.05,
+        weight=-0.03,
     )
 
     flat_orientation_l2 = RewTerm(
         func=mdp.flat_orientation_l2,
-        weight=-1.0,
+        weight=-0.5,
     )
 
+    # IMU-based posture / stability rewards
+    imu_projected_gravity_xy_l2 = RewTerm(
+        func=imu_projected_gravity_xy_l2,
+        weight=-1.0,
+        params={
+            "sensor_cfg": SceneEntityCfg("imu"),
+        },
+    )
+
+    imu_ang_vel_xy_l2 = RewTerm(
+        func=imu_ang_vel_xy_l2,
+        weight=-0.05,
+        params={
+            "sensor_cfg": SceneEntityCfg("imu"),
+        },
+    )
+
+    imu_dynamic_acc_l2 = RewTerm(
+        func=imu_dynamic_acc_l2,
+        weight=-0.03,
+        params={
+            "sensor_cfg": SceneEntityCfg("imu"),
+            "gravity": GRAVITY_MAG,
+        },
+    )
+
+    imu_vertical_dynamic_acc_l2 = RewTerm(
+        func=imu_vertical_dynamic_acc_l2,
+        weight=-0.05,
+        params={
+            "sensor_cfg": SceneEntityCfg("imu"),
+            "gravity": GRAVITY_MAG,
+        },
+    )
+
+    # action / naturalness penalties
     action_rate_l2 = RewTerm(
         func=mdp.action_rate_l2,
         weight=-0.03,
@@ -593,6 +810,8 @@ class RewardsCfg:
 
 @configclass
 class TerminationsCfg:
+    """Termination terms for the MDP."""
+
     time_out = DoneTerm(
         func=mdp.time_out,
         time_out=True,
@@ -621,6 +840,8 @@ class TerminationsCfg:
 
 @configclass
 class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
+    """Manager-based RL environment configuration for Hugo hexapod."""
+
     scene: MultiLeggedRobotSceneCfg = MultiLeggedRobotSceneCfg(
         num_envs=4096,
         env_spacing=4.0,
@@ -634,6 +855,8 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
     terminations: TerminationsCfg = TerminationsCfg()
 
     def __post_init__(self) -> None:
+        """Post initialization."""
+
         self.decimation = DECIMATION
         self.episode_length_s = 20.0
 
@@ -645,26 +868,48 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
         self.scene.imu.update_period = self.sim.dt
 
         if TERRAIN_MODE == "flat":
-            self.rewards.flat_orientation_l2.weight = -3.0
+            # Contact / gait
             self.rewards.feet_air_time.weight = 0.1
             self.rewards.support_contact_count.weight = 0.4
             self.rewards.feet_contact_force_l2.weight = -0.02
 
+            # Non-foot contact
             self.rewards.undesired_body_contact.weight = -0.3
             self.rewards.undesired_body_contact_force_l2.weight = -0.02
 
+            # State-based stabilization
+            self.rewards.lin_vel_z_l2.weight = -1.0
+            self.rewards.ang_vel_xy_l2.weight = -0.03
+            self.rewards.flat_orientation_l2.weight = -0.5
+
+            # IMU-based stabilization
+            self.rewards.imu_projected_gravity_xy_l2.weight = -1.5
+            self.rewards.imu_ang_vel_xy_l2.weight = -0.05
+            self.rewards.imu_dynamic_acc_l2.weight = -0.03
+            self.rewards.imu_vertical_dynamic_acc_l2.weight = -0.05
+
+            # Naturalness
             self.rewards.action_rate_l2.weight = -0.03
             self.rewards.action_l2.weight = -0.005
             self.rewards.joint_deviation_l2.weight = -0.05
 
         elif TERRAIN_MODE == "mixed":
-            self.rewards.flat_orientation_l2.weight = -1.0
+            # Mixed terrain needs more freedom than flat terrain.
             self.rewards.feet_air_time.weight = 0.05
             self.rewards.support_contact_count.weight = 0.25
             self.rewards.feet_contact_force_l2.weight = -0.02
 
             self.rewards.undesired_body_contact.weight = -0.2
             self.rewards.undesired_body_contact_force_l2.weight = -0.01
+
+            self.rewards.lin_vel_z_l2.weight = -0.8
+            self.rewards.ang_vel_xy_l2.weight = -0.03
+            self.rewards.flat_orientation_l2.weight = -0.3
+
+            self.rewards.imu_projected_gravity_xy_l2.weight = -0.8
+            self.rewards.imu_ang_vel_xy_l2.weight = -0.03
+            self.rewards.imu_dynamic_acc_l2.weight = -0.015
+            self.rewards.imu_vertical_dynamic_acc_l2.weight = -0.03
 
             self.rewards.action_rate_l2.weight = -0.03
             self.rewards.action_l2.weight = -0.005
