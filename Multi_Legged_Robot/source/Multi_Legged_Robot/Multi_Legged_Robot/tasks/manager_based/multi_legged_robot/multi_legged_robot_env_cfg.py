@@ -3,19 +3,17 @@
 
 """Configuration for Hugo hexapod manager-based RL environment.
 
-Goal of this version:
-- mixed terrain training
-- reduce reward-setting conflicts between RewardsCfg and __post_init__
-- use lower mixed-terrain command speed
-- strengthen feet_air_time to encourage stepping
-- temporarily disable support_contact_count to test whether it causes unbalanced leg usage
-- keep IMU-based posture stabilization
-- keep body-contact penalty to discourage non-foot contact walking
+This version adds:
+- IMU sensor on base_link
+- foot contact sensor
+- full-body contact sensor
+- front RGB-D camera on base_link/front_camera
 
 Important:
+- Camera is added only as a scene sensor.
+- Camera is NOT used in observations or rewards yet.
+- Use scripts/check_camera_sensor.py to verify camera data first.
 - enabled_self_collisions is kept False because True caused unnatural stretching.
-- IMU is used in policy observations and stability rewards.
-- Since observation space includes IMU, do not resume from old non-IMU checkpoints.
 """
 
 from __future__ import annotations
@@ -34,7 +32,7 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sensors import ContactSensorCfg, ImuCfg
+from isaaclab.sensors import ContactSensorCfg, ImuCfg, CameraCfg
 from isaaclab.utils import configclass
 
 import isaaclab.envs.mdp as mdp
@@ -56,6 +54,22 @@ SIM_DT = 1.0 / 200.0
 DECIMATION = 4
 
 GRAVITY_MAG = 9.81
+
+
+##
+# Camera constants
+##
+
+# Camera is attached to base_link/front_camera.
+# Convention:
+# - "world": camera forward axis +X, up axis +Z.
+# - pitch down 30 deg around +Y:
+#   quaternion = (cos(15deg), 0, sin(15deg), 0)
+CAMERA_PITCH_DOWN_30DEG_QUAT = (0.9659258, 0.0, 0.2588190, 0.0)
+
+# Front/head-like position relative to base_link.
+# If the camera appears too far/too close, tune x/z only.
+CAMERA_OFFSET_POS = (0.35, 0.0, 0.08)
 
 
 ##
@@ -89,8 +103,7 @@ def feet_support_count(
 ):
     """Reward when at least min_contacts feet are in contact.
 
-    In this version, the reward weight is set to 0.0 for mixed terrain
-    to test whether this term causes unbalanced or overly static leg usage.
+    Currently weight is set to 0.0 in __post_init__ for mixed terrain.
     """
     contact_sensor = env.scene[sensor_cfg.name]
     forces_w = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]
@@ -109,10 +122,7 @@ def feet_air_time_reward(
     threshold: float = 0.30,
     command_threshold: float = 0.1,
 ):
-    """Reward feet that stay in the air briefly before making contact.
-
-    Negative air-time reward is clipped to zero.
-    """
+    """Reward feet that stay in the air briefly before making contact."""
     contact_sensor = env.scene[sensor_cfg.name]
 
     first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
@@ -149,10 +159,7 @@ def undesired_body_contact(
     sensor_cfg: SceneEntityCfg,
     threshold: float = 10.0,
 ):
-    """Penalty when non-foot bodies make contact.
-
-    This discourages the robot from using body/leg links as support surfaces.
-    """
+    """Penalty when non-foot bodies make contact."""
     contact_sensor = env.scene[sensor_cfg.name]
     forces_w = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]
     force_norm = torch.norm(forces_w, dim=-1)
@@ -190,15 +197,7 @@ def imu_lin_acc_residual_b(
     sensor_cfg: SceneEntityCfg,
     gravity: float = GRAVITY_MAG,
 ):
-    """Body-frame dynamic acceleration with gravity component removed.
-
-    At rest:
-        lin_acc_b ≈ [0, 0, 9.81]
-        projected_gravity_b ≈ [0, 0, -1]
-
-    Therefore:
-        residual = lin_acc_b + gravity * projected_gravity_b ≈ 0
-    """
+    """Body-frame dynamic acceleration with gravity component removed."""
     imu = env.scene[sensor_cfg.name]
     residual_acc_b = imu.data.lin_acc_b + gravity * imu.data.projected_gravity_b
     return residual_acc_b / gravity
@@ -233,13 +232,149 @@ def imu_vertical_dynamic_acc_l2(
     sensor_cfg: SceneEntityCfg,
     gravity: float = GRAVITY_MAG,
 ):
-    """Penalty for vertical dynamic acceleration in body frame.
-
-    This is the compact anti-fluctuation term kept in this version.
-    """
+    """Penalty for vertical dynamic acceleration in body frame."""
     imu = env.scene[sensor_cfg.name]
     residual_acc_b = imu.data.lin_acc_b + gravity * imu.data.projected_gravity_b
     return (residual_acc_b[:, 2] / gravity) ** 2
+
+##
+# Camera observation functions
+##
+
+def camera_depth_grid(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    grid_h: int = 3,
+    grid_w: int = 5,
+    max_depth: float = 5.0,
+):
+    """Convert depth image into low-dimensional grid features.
+
+    Output shape:
+        (num_envs, grid_h * grid_w)
+
+    The depth is normalized to [0, 1].
+    Smaller value means closer terrain/object.
+    """
+    camera = env.scene[sensor_cfg.name]
+    depth = camera.data.output["depth"]
+
+    # depth: (N, H, W, 1) -> (N, H, W)
+    if depth.dim() == 4:
+        depth = depth[..., 0]
+
+    depth = torch.nan_to_num(depth, nan=max_depth, posinf=max_depth, neginf=max_depth)
+    depth = torch.clamp(depth, min=0.0, max=max_depth)
+
+    num_envs, height, width = depth.shape
+
+    cell_h = height // grid_h
+    cell_w = width // grid_w
+
+    features = []
+
+    for i in range(grid_h):
+        for j in range(grid_w):
+            y0 = i * cell_h
+            y1 = (i + 1) * cell_h if i < grid_h - 1 else height
+            x0 = j * cell_w
+            x1 = (j + 1) * cell_w if j < grid_w - 1 else width
+
+            patch = depth[:, y0:y1, x0:x1]
+            patch_mean = torch.mean(patch, dim=(1, 2))
+            features.append(patch_mean / max_depth)
+
+    return torch.stack(features, dim=1)
+
+
+def camera_depth_near_min(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    max_depth: float = 5.0,
+):
+    """Minimum depth in the lower-center region.
+
+    This approximates the distance to the near-front terrain/obstacle.
+    """
+    camera = env.scene[sensor_cfg.name]
+    depth = camera.data.output["depth"]
+
+    if depth.dim() == 4:
+        depth = depth[..., 0]
+
+    depth = torch.nan_to_num(depth, nan=max_depth, posinf=max_depth, neginf=max_depth)
+    depth = torch.clamp(depth, min=0.0, max=max_depth)
+
+    _, height, width = depth.shape
+
+    # lower-center area
+    y0 = int(height * 0.55)
+    y1 = height
+    x0 = int(width * 0.35)
+    x1 = int(width * 0.65)
+
+    patch = depth[:, y0:y1, x0:x1]
+    near_min = torch.amin(patch, dim=(1, 2))
+
+    return (near_min / max_depth).unsqueeze(-1)
+
+
+def camera_depth_valid_ratio(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    max_depth: float = 5.0,
+):
+    """Ratio of valid finite depth pixels."""
+    camera = env.scene[sensor_cfg.name]
+    depth = camera.data.output["depth"]
+
+    if depth.dim() == 4:
+        depth = depth[..., 0]
+
+    valid = torch.isfinite(depth) & (depth > 0.0) & (depth < max_depth)
+    ratio = torch.mean(valid.float(), dim=(1, 2))
+
+    return ratio.unsqueeze(-1)
+
+
+##
+# Camera reward functions
+##
+
+def camera_near_obstacle_penalty(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    min_safe_depth: float = 0.35,
+    max_depth: float = 5.0,
+):
+    """Penalty if the lower-center camera view has very close terrain/object.
+
+    This is a pre-contact risk penalty.
+    It does not replace undesired_body_contact.
+    """
+    camera = env.scene[sensor_cfg.name]
+    depth = camera.data.output["depth"]
+
+    if depth.dim() == 4:
+        depth = depth[..., 0]
+
+    depth = torch.nan_to_num(depth, nan=max_depth, posinf=max_depth, neginf=max_depth)
+    depth = torch.clamp(depth, min=0.0, max=max_depth)
+
+    _, height, width = depth.shape
+
+    y0 = int(height * 0.55)
+    y1 = height
+    x0 = int(width * 0.35)
+    x1 = int(width * 0.65)
+
+    patch = depth[:, y0:y1, x0:x1]
+    near_min = torch.amin(patch, dim=(1, 2))
+
+    # If near_min < min_safe_depth, penalty increases.
+    penalty = torch.clamp(min_safe_depth - near_min, min=0.0) / min_safe_depth
+
+    return penalty
 
 
 ##
@@ -293,8 +428,6 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
                 max_depenetration_velocity=10.0,
             ),
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                # Keep False.
-                # True caused unnatural stretching for this robot/collision setup.
                 enabled_self_collisions=False,
                 solver_position_iteration_count=8,
                 solver_velocity_iteration_count=2,
@@ -362,6 +495,40 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
         gravity_bias=(0.0, 0.0, GRAVITY_MAG),
     )
 
+    # Front RGB-D camera.
+    #
+    # Camera prim is spawned as a child of base_link:
+    #   /World/envs/env_*/Robot/base_link/front_camera
+    #
+    # Using convention="world":
+    # - camera forward axis: +X
+    # - camera up axis: +Z
+    #
+    # The quaternion below pitches the camera down by about 30 degrees,
+    # so it can see the ground in front of the robot.
+    front_camera = CameraCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/base_link/front_camera",
+        update_period=0.0,
+        history_length=1,
+        debug_vis=False,
+        height=120,
+        width=160,
+        data_types=["rgb", "depth"],
+        depth_clipping_behavior="max",
+        update_latest_camera_pose=True,
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=24.0,
+            focus_distance=400.0,
+            horizontal_aperture=20.955,
+            clipping_range=(0.1, 10.0),
+        ),
+        offset=CameraCfg.OffsetCfg(
+            pos=CAMERA_OFFSET_POS,
+            rot=CAMERA_PITCH_DOWN_30DEG_QUAT,
+            convention="world",
+        ),
+    )
+
     dome_light = AssetBaseCfg(
         prim_path="/World/DomeLight",
         spawn=sim_utils.DomeLightCfg(
@@ -387,8 +554,6 @@ class CommandsCfg:
         heading_command=False,
         debug_vis=False,
         ranges=mdp.UniformVelocityCommandCfg.Ranges(
-            # Base value. The actual value is also overwritten in __post_init__
-            # according to TERRAIN_MODE.
             lin_vel_x=(0.15, 0.40),
             lin_vel_y=(-0.03, 0.03),
             ang_vel_z=(-0.12, 0.12),
@@ -422,16 +587,9 @@ class ObservationsCfg:
 
     @configclass
     class PolicyCfg(ObsGroup):
-        """Policy observations with IMU.
+        """Policy observations.
 
-        Observation terms:
-        - simulator base linear velocity
-        - IMU angular velocity
-        - IMU projected gravity
-        - IMU residual acceleration
-        - command
-        - revolute joint position/velocity
-        - previous action
+        Camera is NOT included here yet.
         """
 
         base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
@@ -561,19 +719,9 @@ class EventCfg:
 class RewardsCfg:
     """Compact reward terms for mixed-terrain walking.
 
-    Removed duplicate penalties:
-    - flat_orientation_l2
-    - ang_vel_xy_l2
-    - lin_vel_z_l2
-    - imu_dynamic_acc_l2
-    - joint_acc_l2
-    - joint_torques_l2
-    - undesired_body_contact_force_l2
+    Camera is NOT used in rewards yet.
     """
 
-    # ------------------------------------------------------------
-    # Survival
-    # ------------------------------------------------------------
     is_alive = RewTerm(
         func=mdp.is_alive,
         weight=0.03,
@@ -584,9 +732,6 @@ class RewardsCfg:
         weight=-5.0,
     )
 
-    # ------------------------------------------------------------
-    # Main locomotion objective
-    # ------------------------------------------------------------
     track_lin_vel_xy = RewTerm(
         func=mdp.track_lin_vel_xy_exp,
         weight=3.0,
@@ -605,9 +750,6 @@ class RewardsCfg:
         },
     )
 
-    # ------------------------------------------------------------
-    # Foot contact / gait
-    # ------------------------------------------------------------
     feet_air_time = RewTerm(
         func=feet_air_time_reward,
         weight=0.10,
@@ -619,7 +761,6 @@ class RewardsCfg:
         },
     )
 
-    # Temporarily disabled to test whether this reward causes unbalanced leg usage.
     support_contact_count = RewTerm(
         func=feet_support_count,
         weight=0.0,
@@ -639,9 +780,6 @@ class RewardsCfg:
         },
     )
 
-    # ------------------------------------------------------------
-    # Anti-weird-contact reward hacking
-    # ------------------------------------------------------------
     undesired_body_contact = RewTerm(
         func=undesired_body_contact,
         weight=-0.6,
@@ -654,9 +792,6 @@ class RewardsCfg:
         },
     )
 
-    # ------------------------------------------------------------
-    # IMU-based stability
-    # ------------------------------------------------------------
     imu_projected_gravity_xy_l2 = RewTerm(
         func=imu_projected_gravity_xy_l2,
         weight=-0.8,
@@ -682,9 +817,6 @@ class RewardsCfg:
         },
     )
 
-    # ------------------------------------------------------------
-    # Naturalness / anti-folded-leg
-    # ------------------------------------------------------------
     action_rate_l2 = RewTerm(
         func=mdp.action_rate_l2,
         weight=-0.04,
@@ -774,9 +906,9 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
         self.scene.contact_forces.update_period = self.sim.dt
         self.scene.body_contact_forces.update_period = self.sim.dt
         self.scene.imu.update_period = self.sim.dt
+        self.scene.front_camera.update_period = self.sim.dt
 
         if TERRAIN_MODE == "flat":
-            # Flat terrain setting.
             self.commands.base_velocity.ranges.lin_vel_x = (0.25, 0.65)
             self.commands.base_velocity.ranges.ang_vel_z = (-0.12, 0.12)
 
@@ -799,26 +931,18 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
             self.rewards.joint_pos_limits.weight = -0.15
 
         elif TERRAIN_MODE == "mixed":
-            # Mixed terrain setting.
-            # This is intentionally more conservative than the previous mixed setting.
             self.commands.base_velocity.ranges.lin_vel_x = (0.15, 0.40)
             self.commands.base_velocity.ranges.ang_vel_z = (-0.12, 0.12)
 
             self.rewards.track_lin_vel_xy.weight = 3.0
             self.rewards.track_ang_vel_z.weight = 0.6
 
-            # Stronger stepping encouragement.
             self.rewards.feet_air_time.weight = 0.10
-
-            # Temporarily disabled for experiment.
             self.rewards.support_contact_count.weight = 0.0
-
             self.rewards.feet_contact_force_l2.weight = -0.015
 
-            # Keep body-contact penalty strong.
             self.rewards.undesired_body_contact.weight = -0.6
 
-            # Mixed terrain requires some body motion freedom.
             self.rewards.imu_projected_gravity_xy_l2.weight = -0.8
             self.rewards.imu_ang_vel_xy_l2.weight = -0.06
             self.rewards.imu_vertical_dynamic_acc_l2.weight = -0.04
