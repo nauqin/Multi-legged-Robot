@@ -421,7 +421,7 @@ class RewardsCfg:
     # vertical fluctuation penalty: suppress bouncing motion
     lin_vel_z_l2 = RewTerm(
         func=mdp.lin_vel_z_l2,
-        weight=-1.0,
+        weight=-0.25,
     )
 
     # roll/pitch angular velocity penalty
@@ -433,8 +433,7 @@ class RewardsCfg:
     # posture stability: keep body reasonably flat
     flat_orientation_l2 = RewTerm(
         func=mdp.flat_orientation_l2,
-        weight=-1.0,
-    )
+        weight=-1.0,)
 
     # smoothness
     action_rate_l2 = RewTerm(
