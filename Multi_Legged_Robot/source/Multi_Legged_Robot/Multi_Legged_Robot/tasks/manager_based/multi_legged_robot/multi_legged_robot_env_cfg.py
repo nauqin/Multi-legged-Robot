@@ -44,7 +44,7 @@ import isaaclab.envs.mdp as mdp
 ##
 
 TERRAIN_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/terrain.usd"
-ROBOT_URDF_PATH = "/home/sejong/WS/Hugo_Multi/usd files/hugo_hexapod.urdf"
+ROBOT_URDF_PATH = "/home/sejong/WS/Hugo_Multi/usd files/hugo_hexapod_ver2/hugo_hexapod.usd"
 
 # Prismatic을 잠깐 사용하지 않는 revolute-only 단계에서는
 # TARGET_BODY_HEIGHT 기반 anti-fluctuation 직접 보상은 제거한다.
@@ -80,7 +80,7 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
 
     robot = ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
-        spawn=sim_utils.UrdfFileCfg(
+        spawn=sim_utils.UsdFileCfg(
             asset_path=ROBOT_URDF_PATH,
             make_instanceable=True,
             fix_base=False,
