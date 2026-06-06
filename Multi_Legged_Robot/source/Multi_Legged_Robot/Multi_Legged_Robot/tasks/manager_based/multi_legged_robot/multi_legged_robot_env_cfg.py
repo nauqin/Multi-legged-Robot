@@ -3,25 +3,28 @@
 
 """Configuration for Hugo hexapod manager-based RL environment.
 
-USD-based revolute-only training configuration with foot contact sensors.
+USD-based revolute-only training configuration with contact sensors.
 
 Current purpose:
 - load robot from verified USD file
-- enable foot contact sensor
+- enable contact sensors
 - train basic walking using revolute joints first
 - keep prismatic joints near zero
 - add first-stage contact-based rewards:
   1) feet_air_time
   2) support_contact_count
   3) feet_contact_force_l2
+  4) undesired_body_contact
 - support terrain mode switching:
   1) flat  : simple ground plane
   2) mixed : prebuilt USD terrain with flat / rough / slope / stairs, etc.
 
 Notes:
-- Contact sensor currently tracks only foot bodies: .*_feet
-- Therefore, do not use base_contact / undesired body contact yet.
-- For base_contact or undesired_contacts, add a separate full-body contact sensor later.
+- contact_forces tracks only foot bodies: .*_feet
+- body_contact_forces tracks all robot bodies.
+- undesired_body_contact uses only non-foot bodies from body_contact_forces.
+- This penalizes contact on base / leg links / body parts.
+- With self-collisions enabled, it can also penalize foot-body or leg-leg collision-like contacts.
 """
 
 from __future__ import annotations
@@ -56,20 +59,13 @@ import isaaclab.envs.mdp as mdp
 # ------------------------------------------------------------
 # "flat"  : use simple flat ground plane
 # "mixed" : use prebuilt USD terrain
-#
-# 현재 복합 지형에서 학습이 불안정하면 "flat"으로 먼저 학습하세요.
-# 이후 어느 정도 보행이 잡히면 "mixed"로 바꿔서 이어서 학습하면 됩니다.
 # ------------------------------------------------------------
 TERRAIN_MODE = "flat"     # "flat" or "mixed"
 
 TERRAIN_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/terrain.usd"
-
-# Use the USD file imported and verified in Isaac Sim.
 ROBOT_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/hugo_hexapod_ver2/hugo_hexapod_ver2.usd"
 
 # Initial spawn height.
-# Contact sensor test showed feet start in air and then contact the ground.
-# If impact is too large, gradually lower this value after checking terrain clearance.
 INITIAL_BODY_HEIGHT = 1.75
 
 # 50 Hz action period: sim.dt=1/200, decimation=4
@@ -78,7 +74,38 @@ DECIMATION = 4
 
 
 ##
-# Custom reward functions using foot contact sensor
+# Body name patterns
+##
+
+# Feet bodies verified from contact sensor test:
+# ['L1_feet', 'L2_feet', 'L3_feet', 'R1_feet', 'R2_feet', 'R3_feet']
+FOOT_BODY_NAMES = [".*_feet"]
+
+# Non-foot body names.
+# These are used for undesired contact penalty.
+#
+# The goal is to penalize:
+# - base touching terrain
+# - leg links other than feet touching terrain
+# - if self collision is enabled, foot/body or leg/body contact-like interactions
+#
+# If your actual USD body names differ, run check_contact_sensor.py with
+# body_contact_forces and print body_names.
+NON_FOOT_BODY_NAMES = [
+    "base_link",
+    ".*_hip_dummy",
+    ".*_sphere1",
+    ".*_inside",
+    ".*_outside",
+    ".*_sphere2_base",
+    ".*_sphere2",
+    ".*_inside2",
+    ".*_outside2",
+]
+
+
+##
+# Custom reward functions using contact sensors
 ##
 
 def feet_support_count(
@@ -90,7 +117,6 @@ def feet_support_count(
     """Reward when at least min_contacts feet are in contact.
 
     For a hexapod, encouraging at least 3 contacts helps form a stable support set.
-    This is intentionally simple for the first contact-sensor stage.
     """
     contact_sensor = env.scene[sensor_cfg.name]
 
@@ -113,17 +139,13 @@ def feet_air_time_reward(
 ):
     """Reward feet that stay in the air for a short time before making contact.
 
-    This is a local replacement for mdp.feet_air_time,
-    because the current isaaclab.envs.mdp module does not expose feet_air_time.
+    Local replacement for mdp.feet_air_time.
 
     Reward is given only when:
     - a foot makes first contact in this step
     - the commanded xy velocity is large enough
 
-    Important:
-    - Negative air-time reward is clipped to zero.
-    - This prevents early learning from being punished too strongly
-      when the robot is not yet able to lift feet properly.
+    Negative air-time reward is clipped to zero for early learning stability.
     """
     contact_sensor = env.scene[sensor_cfg.name]
 
@@ -134,8 +156,6 @@ def feet_air_time_reward(
     last_air_time = contact_sensor.data.last_air_time[:, sensor_cfg.body_ids]
 
     # Reward only positive air time beyond threshold.
-    # 기존 (last_air_time - threshold)를 그대로 쓰면 음수 보상이 발생하므로,
-    # 초기 학습 안정성을 위해 음수는 잘라냅니다.
     air_time_reward = torch.clamp(last_air_time - threshold, min=0.0)
     reward = torch.sum(air_time_reward * first_contact.float(), dim=1)
 
@@ -167,6 +187,76 @@ def feet_contact_force_l2(
     penalty = torch.mean((excess_force / max_force) ** 2, dim=1)
 
     return penalty
+
+
+def undesired_body_contact(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    threshold: float = 10.0,
+):
+    """Penalty when non-foot bodies make contact.
+
+    This is similar in spirit to undesired contact penalties used in legged locomotion.
+
+    It penalizes contact forces detected on:
+    - base_link
+    - hip / sphere / inside / outside leg links
+    - all non-foot leg structures
+
+    Important:
+    - This function does not use the foot contact sensor.
+    - It uses body_contact_forces, which tracks all robot bodies.
+    - The SceneEntityCfg body_names should select only non-foot bodies.
+    """
+    contact_sensor = env.scene[sensor_cfg.name]
+
+    # Shape: (num_envs, num_non_foot_bodies, 3)
+    forces_w = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]
+    force_norm = torch.norm(forces_w, dim=-1)
+
+    # Count how many non-foot bodies are contacting something.
+    contacts = force_norm > threshold
+    contact_count = torch.sum(contacts.float(), dim=1)
+
+    return contact_count
+
+
+def undesired_body_contact_force_l2(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    max_force: float = 100.0,
+):
+    """Penalty for large contact force on non-foot bodies.
+
+    This is softer than pure contact count.
+    It becomes large only when non-foot body contact force is high.
+    """
+    contact_sensor = env.scene[sensor_cfg.name]
+
+    # Shape: (num_envs, num_non_foot_bodies, 3)
+    forces_w = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]
+    force_norm = torch.norm(forces_w, dim=-1)
+
+    excess_force = torch.clamp(force_norm - max_force, min=0.0)
+    penalty = torch.mean((excess_force / max_force) ** 2, dim=1)
+
+    return penalty
+
+
+def joint_deviation_l2(
+    env,
+    asset_cfg: SceneEntityCfg,
+):
+    """Penalty for revolute joints deviating too far from default joint positions.
+
+    This helps reduce strange folded-leg motions while still allowing movement.
+    """
+    asset = env.scene[asset_cfg.name]
+
+    joint_pos = asset.data.joint_pos[:, asset_cfg.joint_ids]
+    default_joint_pos = asset.data.default_joint_pos[:, asset_cfg.joint_ids]
+
+    return torch.mean((joint_pos - default_joint_pos) ** 2, dim=1)
 
 
 def contact_force_distribution(
@@ -211,14 +301,6 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
     # ------------------------------------------------------------
     # Terrain selection
     # ------------------------------------------------------------
-    # 현재 Hugo env는 TerrainImporterCfg가 아니라 AssetBaseCfg 기반이므로,
-    # 아래와 같은 방식은 사용하지 않습니다.
-    #
-    #   self.scene.terrain.terrain_type = "plane"
-    #   self.scene.terrain.terrain_generator = None
-    #
-    # 대신 class 정의 시점에서 terrain asset 자체를 flat/mixed로 선택합니다.
-    # ------------------------------------------------------------
     if TERRAIN_MODE == "flat":
         terrain = AssetBaseCfg(
             prim_path="/World/ground",
@@ -253,6 +335,15 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
             ),
 
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+                # IMPORTANT:
+                # To penalize foot-body or leg-body contacts, self collisions should be enabled.
+                #
+                # If the simulation becomes unstable immediately after enabling this,
+                # it likely means some collision geometries overlap in the default pose.
+                # In that case:
+                #   1) temporarily set this back to False
+                #   2) use undesired body-ground contact penalty only
+                #   3) fix collision geometry / self-collision filters in the USD later
                 enabled_self_collisions=False,
                 solver_position_iteration_count=8,
                 solver_velocity_iteration_count=2,
@@ -267,7 +358,6 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
                 ".*joint3_pitch": 0.0,
 
                 # Prismatic joints are initialized at zero.
-                # For true locking, also lock limits in the USD/URDF if needed.
                 ".*prismatic1": 0.0,
                 ".*prismatic2": 0.0,
             },
@@ -296,18 +386,37 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
         },
     )
 
-    # Foot contact sensor.
-    #
-    # Verified body names:
-    # ['L1_feet', 'L2_feet', 'L3_feet', 'R1_feet', 'R2_feet', 'R3_feet']
-    #
-    # Do not use filter_prim_paths_expr in this first stage.
-    # We use net_forces_w and air/contact time only.
+    # ------------------------------------------------------------
+    # Foot contact sensor
+    # ------------------------------------------------------------
+    # Tracks only feet.
+    # Used for:
+    # - feet_air_time
+    # - support_contact_count
+    # - feet_contact_force_l2
     contact_forces = ContactSensorCfg(
         prim_path="{ENV_REGEX_NS}/Robot/.*_feet",
         history_length=3,
         update_period=0.0,
         track_air_time=True,
+        force_threshold=1.0,
+        debug_vis=False,
+    )
+
+    # ------------------------------------------------------------
+    # Full-body contact sensor
+    # ------------------------------------------------------------
+    # Tracks all robot bodies.
+    # Used for:
+    # - undesired_body_contact
+    # - undesired_body_contact_force_l2
+    #
+    # We select non-foot bodies later using SceneEntityCfg body_names.
+    body_contact_forces = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/.*",
+        history_length=3,
+        update_period=0.0,
+        track_air_time=False,
         force_threshold=1.0,
         debug_vis=False,
     )
@@ -488,8 +597,6 @@ class EventCfg:
     )
 
     # Disabled for first-stage walking.
-    # External disturbance can make the policy prefer stabilization
-    # before it learns basic gait.
     # push_robot = EventTerm(
     #     func=mdp.apply_external_force_torque,
     #     mode="interval",
@@ -508,14 +615,7 @@ class EventCfg:
 
 @configclass
 class RewardsCfg:
-    """Reward terms for first-stage revolute-only walking with foot contact sensor.
-
-    Main idea:
-    - Keep velocity tracking as the main locomotion objective.
-    - Add contact reward lightly, not too strongly.
-    - Encourage at least 3 supporting feet for hexapod stability.
-    - Penalize excessive foot impact.
-    """
+    """Reward terms for first-stage revolute-only walking with contact sensors."""
 
     # alive / termination
     is_alive = RewTerm(
@@ -548,13 +648,11 @@ class RewardsCfg:
     )
 
     # Contact-based gait reward.
-    # This encourages feet to lift and re-contact instead of dragging all feet.
-    # Keep weight modest for hexapod stability.
     feet_air_time = RewTerm(
         func=feet_air_time_reward,
         weight=0.05,
         params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_feet"),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=FOOT_BODY_NAMES),
             "command_name": "base_velocity",
             "threshold": 0.35,
             "command_threshold": 0.1,
@@ -562,25 +660,56 @@ class RewardsCfg:
     )
 
     # Hexapod support reward.
-    # Encourage at least 3 feet in contact.
     support_contact_count = RewTerm(
         func=feet_support_count,
         weight=0.25,
         params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_feet"),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=FOOT_BODY_NAMES),
             "threshold": 5.0,
             "min_contacts": 3,
         },
     )
 
     # Penalize strong foot impacts.
-    # The function returns a positive value, so the weight must be negative.
     feet_contact_force_l2 = RewTerm(
         func=feet_contact_force_l2,
         weight=-0.02,
         params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_feet"),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=FOOT_BODY_NAMES),
             "max_force": 600.0,
+        },
+    )
+
+    # Penalize non-foot body contacts.
+    #
+    # This is the important new term.
+    # It discourages using base / leg links as support surfaces
+    # and reduces strange folded-leg walking.
+    undesired_body_contact = RewTerm(
+        func=undesired_body_contact,
+        weight=-0.3,
+        params={
+            "sensor_cfg": SceneEntityCfg(
+                "body_contact_forces",
+                body_names=NON_FOOT_BODY_NAMES,
+            ),
+            "threshold": 10.0,
+        },
+    )
+
+    # Softer force-based version of non-foot contact penalty.
+    #
+    # This helps when contact_count alone is too binary.
+    # If learning becomes too conservative, reduce this weight first.
+    undesired_body_contact_force_l2 = RewTerm(
+        func=undesired_body_contact_force_l2,
+        weight=-0.02,
+        params={
+            "sensor_cfg": SceneEntityCfg(
+                "body_contact_forces",
+                body_names=NON_FOOT_BODY_NAMES,
+            ),
+            "max_force": 100.0,
         },
     )
 
@@ -605,12 +734,21 @@ class RewardsCfg:
     # smoothness
     action_rate_l2 = RewTerm(
         func=mdp.action_rate_l2,
-        weight=-0.02,
+        weight=-0.03,
     )
 
     action_l2 = RewTerm(
         func=mdp.action_l2,
-        weight=-0.001,
+        weight=-0.005,
+    )
+
+    # Penalize strange folded joint configurations.
+    joint_deviation_l2 = RewTerm(
+        func=joint_deviation_l2,
+        weight=-0.05,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=[".*joint.*"]),
+        },
     )
 
     # energy-like terms
@@ -640,7 +778,7 @@ class RewardsCfg:
     #     func=contact_force_distribution,
     #     weight=-0.03,
     #     params={
-    #         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_feet"),
+    #         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=FOOT_BODY_NAMES),
     #         "threshold": 5.0,
     #         "max_force": 800.0,
     #     },
@@ -676,9 +814,9 @@ class TerminationsCfg:
         },
     )
 
-    # Do not add base_contact here yet.
-    # Current contact sensor tracks only .*_feet.
-    # To terminate on base or body collision, add a separate full-body contact sensor later.
+    # Do not add body-contact termination yet.
+    # We first use undesired_body_contact as a reward penalty.
+    # If the robot still abuses body contacts, we can add a termination later.
 
 
 ##
@@ -713,21 +851,12 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.dt = SIM_DT
         self.sim.render_interval = self.decimation
 
-        # Contact sensor update period.
-        # update_period=0.0 already means every simulation step.
-        # This line makes the intended timing explicit.
+        # Contact sensor update periods.
         self.scene.contact_forces.update_period = self.sim.dt
+        self.scene.body_contact_forces.update_period = self.sim.dt
 
         # ------------------------------------------------------------
         # Terrain-mode-specific reward tuning
-        # ------------------------------------------------------------
-        # flat:
-        #   - 먼저 평지에서 기본 보행을 만들기 위한 설정
-        #   - 자세 안정성, 3점 이상 접지를 조금 더 강조
-        #
-        # mixed:
-        #   - 복합 지형에서는 너무 강한 자세 제한이 오히려 지형 적응을 방해할 수 있으므로
-        #     flat보다 완화
         # ------------------------------------------------------------
         if TERRAIN_MODE == "flat":
             self.rewards.flat_orientation_l2.weight = -3.0
@@ -735,11 +864,31 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
             self.rewards.support_contact_count.weight = 0.4
             self.rewards.feet_contact_force_l2.weight = -0.02
 
+            # New body-contact penalties.
+            # Start mild-to-medium.
+            # If the robot still uses body contacts, increase undesired_body_contact to -0.5.
+            # If it becomes too stiff or refuses to move, reduce to -0.1.
+            self.rewards.undesired_body_contact.weight = -0.3
+            self.rewards.undesired_body_contact_force_l2.weight = -0.02
+
+            # Naturalness penalties.
+            self.rewards.action_rate_l2.weight = -0.03
+            self.rewards.action_l2.weight = -0.005
+            self.rewards.joint_deviation_l2.weight = -0.05
+
         elif TERRAIN_MODE == "mixed":
             self.rewards.flat_orientation_l2.weight = -1.0
             self.rewards.feet_air_time.weight = 0.05
             self.rewards.support_contact_count.weight = 0.25
             self.rewards.feet_contact_force_l2.weight = -0.02
+
+            # Mixed terrain needs more freedom, so start slightly weaker.
+            self.rewards.undesired_body_contact.weight = -0.2
+            self.rewards.undesired_body_contact_force_l2.weight = -0.01
+
+            self.rewards.action_rate_l2.weight = -0.03
+            self.rewards.action_l2.weight = -0.005
+            self.rewards.joint_deviation_l2.weight = -0.03
 
         else:
             raise ValueError(
