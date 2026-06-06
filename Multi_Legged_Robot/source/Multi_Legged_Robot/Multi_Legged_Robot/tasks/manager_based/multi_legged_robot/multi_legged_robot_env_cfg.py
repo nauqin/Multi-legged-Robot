@@ -3,19 +3,15 @@
 
 """Configuration for Hugo hexapod manager-based RL environment.
 
-Temporary revolute-only training configuration.
+USD-based revolute-only training configuration with foot contact sensors.
 
 Purpose of this version:
+- load the robot from a pre-imported USD file instead of importing URDF at runtime
 - train basic flat/mild-terrain walking using revolute joints first
 - keep prismatic joints at their default 0 position as much as possible
-- remove direct anti-fluctuation rewards/observations for now
-- keep simple posture/vertical velocity stabilization terms
-- avoid contact sensors for now
-
-Important:
-- This cfg removes prismatic joints from the policy action space.
-- For true prismatic locking, also modify the URDF prismatic joint limits to
-  lower="0.0", upper="0.0" or lower="0.0", upper="0.001".
+- enable contact reporting on the robot asset
+- attach ContactSensorCfg to foot bodies
+- keep contact sensor available for later feet_air_time / contact-based rewards
 """
 
 from __future__ import annotations
@@ -33,6 +29,7 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors import ContactSensorCfg
 from isaaclab.utils import configclass
 
 # IsaacLab official MDP terms
@@ -44,16 +41,15 @@ import isaaclab.envs.mdp as mdp
 ##
 
 TERRAIN_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/terrain.usd"
-ROBOT_URDF_PATH = "/home/sejong/WS/Hugo_Multi/usd files/hugo_hexapod_ver2/hugo_hexapod.usd"
 
-# Prismatic을 잠깐 사용하지 않는 revolute-only 단계에서는
-# TARGET_BODY_HEIGHT 기반 anti-fluctuation 직접 보상은 제거한다.
-# 나중에 prismatic/height control을 다시 사용할 때 아래 값을 복구하면 됨.
-# TARGET_BODY_HEIGHT = 1.02
+# IMPORTANT:
+# Use the USD file that you imported and verified in Isaac Sim.
+# Do not use UrdfFileCfg here.
+ROBOT_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/hugo_hexapod_ver2/hugo_hexapod_ver2.usd"
 
 # 사용자가 확인한 것처럼 로봇이 terrain에 끼어 튕겨나가는 경우가 있어
 # 초기 spawn 높이는 당분간 높게 유지한다.
-# 단, 너무 높으면 낙하 충격이 커질 수 있으므로 안정화되면 1.20, 1.10 등으로 낮춰 실험 권장.
+# 안정화되면 1.20, 1.10 등으로 낮춰 실험 권장.
 INITIAL_BODY_HEIGHT = 1.75
 
 # 50 Hz action period: sim.dt=1/200, decimation=4
@@ -69,8 +65,6 @@ DECIMATION = 4
 class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
     """Scene configuration for Hugo hexapod."""
 
-    # Current mixed terrain USD.
-    # If a pure flat terrain USD exists, use it here for first-stage walking training.
     terrain = AssetBaseCfg(
         prim_path="/World/ground",
         spawn=sim_utils.UsdFileCfg(
@@ -81,23 +75,11 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
     robot = ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
         spawn=sim_utils.UsdFileCfg(
-            asset_path=ROBOT_URDF_PATH,
-            make_instanceable=True,
-            fix_base=False,
+            usd_path=ROBOT_USD_PATH,
 
-            # Contact sensors are intentionally disabled for now.
-            activate_contact_sensors=False,
-
-            # URDF importer requires joint_drive gains.
-            # Actual PD-like behavior is handled by ImplicitActuatorCfg below.
-            joint_drive=sim_utils.UrdfConverterCfg.JointDriveCfg(
-                drive_type="force",
-                target_type="position",
-                gains=sim_utils.UrdfConverterCfg.JointDriveCfg.PDGainsCfg(
-                    stiffness=0.0,
-                    damping=0.0,
-                ),
-            ),
+            # ContactSensor가 contact force를 읽으려면 반드시 필요.
+            # 이 옵션은 asset 안의 rigid bodies에 PhysX contact reporter를 켠다.
+            activate_contact_sensors=True,
 
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 max_depenetration_velocity=10.0,
@@ -118,7 +100,7 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
                 ".*joint3_pitch": 0.0,
 
                 # Prismatic joints are initialized at zero.
-                # For true locking, also lock them in the URDF joint limits.
+                # For true locking, also lock them in the USD/URDF joint limits if needed.
                 ".*prismatic1": 0.0,
                 ".*prismatic2": 0.0,
             },
@@ -128,7 +110,6 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
         actuators={
             # Keep prismatic actuator enabled to hold default position as much as possible.
             # However, prismatic joints are removed from the policy action space below.
-            # Best practice: lock prismatic limits in URDF to 0.0~0.001 as well.
             "prismatic": ImplicitActuatorCfg(
                 joint_names_expr=[".*prismatic.*"],
                 stiffness=3000.0,
@@ -146,6 +127,23 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
                 velocity_limit_sim=2.0,
             ),
         },
+    )
+
+    # Foot contact sensor.
+    #
+    # Hugo foot link names are assumed to be:
+    # L1_feet, L2_feet, L3_feet, R1_feet, R2_feet, R3_feet
+    #
+    # 처음에는 filter_prim_paths_expr를 사용하지 않는다.
+    # 여러 발을 한 센서에서 잡는 경우 filtered contact는 문서상 제한이 있으므로,
+    # 우선 net_forces_w와 air/contact time만 확인하는 구성이 안전하다.
+    contact_forces = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/.*_feet",
+        history_length=3,
+        update_period=0.0,
+        track_air_time=True,
+        force_threshold=1.0,
+        debug_vis=False,
     )
 
     dome_light = AssetBaseCfg(
@@ -220,19 +218,7 @@ class ObservationsCfg:
 
     @configclass
     class PolicyCfg(ObsGroup):
-        """Policy observations for revolute-only walking.
-
-        Removed for now:
-        - base_height observation
-        - body_height_error observation
-
-        Kept:
-        - base velocity
-        - projected gravity
-        - command
-        - revolute joint states
-        - previous action
-        """
+        """Policy observations for revolute-only walking."""
 
         # base state
         base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
@@ -248,11 +234,21 @@ class ObservationsCfg:
         # revolute joint states only
         joint_pos = ObsTerm(
             func=mdp.joint_pos_rel,
-            params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*joint.*"])},
+            params={
+                "asset_cfg": SceneEntityCfg(
+                    "robot",
+                    joint_names=[".*joint.*"],
+                )
+            },
         )
         joint_vel = ObsTerm(
             func=mdp.joint_vel_rel,
-            params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*joint.*"])},
+            params={
+                "asset_cfg": SceneEntityCfg(
+                    "robot",
+                    joint_names=[".*joint.*"],
+                )
+            },
         )
 
         # previous action: now contains revolute action only
@@ -334,7 +330,6 @@ class EventCfg:
     )
 
     # Disabled for first-stage walking.
-    # External disturbance can make the policy prefer standing/stabilization before it learns gait.
     # push_robot = EventTerm(
     #     func=mdp.apply_external_force_torque,
     #     mode="interval",
@@ -355,19 +350,11 @@ class EventCfg:
 class RewardsCfg:
     """Reward terms for first-stage revolute-only walking.
 
-    Removed for now:
-    - body_height_error_l2
-    - body_height_abs_error
-
-    Kept:
-    - velocity tracking
-    - posture stabilization
-    - vertical velocity stabilization
-    - smoothness/energy penalties
+    Contact sensor is enabled in the scene, but contact-based rewards are not added yet.
+    First, verify that contact_forces correctly reports foot contacts.
     """
 
     # alive / termination
-    # Lower than 0.1 to reduce standing-only incentive.
     is_alive = RewTerm(
         func=mdp.is_alive,
         weight=0.05,
@@ -396,10 +383,6 @@ class RewardsCfg:
             "std": math.sqrt(0.25),
         },
     )
-
-    # Direct anti-fluctuation rewards are temporarily disabled.
-    # body_height_error_l2 = RewTerm(...)
-    # body_height_abs_error = RewTerm(...)
 
     # vertical fluctuation penalty: suppress bouncing motion
     lin_vel_z_l2 = RewTerm(
@@ -450,6 +433,18 @@ class RewardsCfg:
         },
     )
 
+    # Later, after verifying contact sensor output, you can add:
+    #
+    # feet_air_time = RewTerm(
+    #     func=mdp.feet_air_time,
+    #     weight=0.5,
+    #     params={
+    #         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_feet"),
+    #         "command_name": "base_velocity",
+    #         "threshold": 0.5,
+    #     },
+    # )
+
 
 ##
 # Terminations
@@ -464,8 +459,6 @@ class TerminationsCfg:
         time_out=True,
     )
 
-    # Previous 0.35 was too low: the body could collapse without immediate termination.
-    # Since spawn height is high, this only affects after the robot lands/settles.
     base_height = DoneTerm(
         func=mdp.root_height_below_minimum,
         params={
@@ -474,7 +467,6 @@ class TerminationsCfg:
         },
     )
 
-    # Previous 1.5 rad was very loose. 1.0 rad is still permissive but terminates clear falls earlier.
     bad_orientation = DoneTerm(
         func=mdp.bad_orientation,
         params={
@@ -482,6 +474,17 @@ class TerminationsCfg:
             "asset_cfg": SceneEntityCfg("robot"),
         },
     )
+
+    # Later, after verifying contact sensor output, you can add a body contact termination.
+    # Example:
+    #
+    # base_contact = DoneTerm(
+    #     func=mdp.illegal_contact,
+    #     params={
+    #         "sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_link"),
+    #         "threshold": 1.0,
+    #     },
+    # )
 
 
 ##
@@ -515,6 +518,11 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
         # simulation
         self.sim.dt = SIM_DT
         self.sim.render_interval = self.decimation
+
+        # Contact sensor update period.
+        # update_period=0.0 already means every simulation step,
+        # but this line makes the intended timing explicit.
+        self.scene.contact_forces.update_period = self.sim.dt
 
         # viewer
         self.viewer.eye = (5.0, 5.0, 4.0)
