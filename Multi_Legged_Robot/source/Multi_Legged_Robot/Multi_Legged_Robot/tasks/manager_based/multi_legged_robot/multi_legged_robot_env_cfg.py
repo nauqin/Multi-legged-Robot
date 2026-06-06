@@ -14,6 +14,9 @@ Current purpose:
   1) feet_air_time
   2) support_contact_count
   3) feet_contact_force_l2
+- support terrain mode switching:
+  1) flat  : simple ground plane
+  2) mixed : prebuilt USD terrain with flat / rough / slope / stairs, etc.
 
 Notes:
 - Contact sensor currently tracks only foot bodies: .*_feet
@@ -48,10 +51,20 @@ import isaaclab.envs.mdp as mdp
 # Paths and design-level constants
 ##
 
+# ------------------------------------------------------------
+# Terrain mode
+# ------------------------------------------------------------
+# "flat"  : use simple flat ground plane
+# "mixed" : use prebuilt USD terrain
+#
+# 현재 복합 지형에서 학습이 불안정하면 "flat"으로 먼저 학습하세요.
+# 이후 어느 정도 보행이 잡히면 "mixed"로 바꿔서 이어서 학습하면 됩니다.
+# ------------------------------------------------------------
+TERRAIN_MODE = "flat"     # "flat" or "mixed"
+
 TERRAIN_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/terrain.usd"
 
 # Use the USD file imported and verified in Isaac Sim.
-# If your actual USD file name is different, change only this path.
 ROBOT_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/hugo_hexapod_ver2/hugo_hexapod_ver2.usd"
 
 # Initial spawn height.
@@ -90,6 +103,7 @@ def feet_support_count(
 
     return (num_contacts >= min_contacts).float()
 
+
 def feet_air_time_reward(
     env,
     sensor_cfg: SceneEntityCfg,
@@ -105,6 +119,11 @@ def feet_air_time_reward(
     Reward is given only when:
     - a foot makes first contact in this step
     - the commanded xy velocity is large enough
+
+    Important:
+    - Negative air-time reward is clipped to zero.
+    - This prevents early learning from being punished too strongly
+      when the robot is not yet able to lift feet properly.
     """
     contact_sensor = env.scene[sensor_cfg.name]
 
@@ -114,8 +133,11 @@ def feet_air_time_reward(
     # Shape: (num_envs, num_feet)
     last_air_time = contact_sensor.data.last_air_time[:, sensor_cfg.body_ids]
 
-    # Reward only the air time beyond threshold at first contact.
-    reward = torch.sum((last_air_time - threshold) * first_contact.float(), dim=1)
+    # Reward only positive air time beyond threshold.
+    # 기존 (last_air_time - threshold)를 그대로 쓰면 음수 보상이 발생하므로,
+    # 초기 학습 안정성을 위해 음수는 잘라냅니다.
+    air_time_reward = torch.clamp(last_air_time - threshold, min=0.0)
+    reward = torch.sum(air_time_reward * first_contact.float(), dim=1)
 
     # Do not reward stepping when command is nearly zero.
     command = env.command_manager.get_command(command_name)
@@ -123,6 +145,7 @@ def feet_air_time_reward(
     reward *= command_xy_norm > command_threshold
 
     return reward
+
 
 def feet_contact_force_l2(
     env,
@@ -185,12 +208,36 @@ def contact_force_distribution(
 class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
     """Scene configuration for Hugo hexapod."""
 
-    terrain = AssetBaseCfg(
-        prim_path="/World/ground",
-        spawn=sim_utils.UsdFileCfg(
-            usd_path=TERRAIN_USD_PATH,
-        ),
-    )
+    # ------------------------------------------------------------
+    # Terrain selection
+    # ------------------------------------------------------------
+    # 현재 Hugo env는 TerrainImporterCfg가 아니라 AssetBaseCfg 기반이므로,
+    # 아래와 같은 방식은 사용하지 않습니다.
+    #
+    #   self.scene.terrain.terrain_type = "plane"
+    #   self.scene.terrain.terrain_generator = None
+    #
+    # 대신 class 정의 시점에서 terrain asset 자체를 flat/mixed로 선택합니다.
+    # ------------------------------------------------------------
+    if TERRAIN_MODE == "flat":
+        terrain = AssetBaseCfg(
+            prim_path="/World/ground",
+            spawn=sim_utils.GroundPlaneCfg(),
+        )
+
+    elif TERRAIN_MODE == "mixed":
+        terrain = AssetBaseCfg(
+            prim_path="/World/ground",
+            spawn=sim_utils.UsdFileCfg(
+                usd_path=TERRAIN_USD_PATH,
+            ),
+        )
+
+    else:
+        raise ValueError(
+            f"Unknown TERRAIN_MODE: {TERRAIN_MODE}. "
+            "Please use 'flat' or 'mixed'."
+        )
 
     robot = ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
@@ -670,6 +717,35 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
         # update_period=0.0 already means every simulation step.
         # This line makes the intended timing explicit.
         self.scene.contact_forces.update_period = self.sim.dt
+
+        # ------------------------------------------------------------
+        # Terrain-mode-specific reward tuning
+        # ------------------------------------------------------------
+        # flat:
+        #   - 먼저 평지에서 기본 보행을 만들기 위한 설정
+        #   - 자세 안정성, 3점 이상 접지를 조금 더 강조
+        #
+        # mixed:
+        #   - 복합 지형에서는 너무 강한 자세 제한이 오히려 지형 적응을 방해할 수 있으므로
+        #     flat보다 완화
+        # ------------------------------------------------------------
+        if TERRAIN_MODE == "flat":
+            self.rewards.flat_orientation_l2.weight = -3.0
+            self.rewards.feet_air_time.weight = 0.1
+            self.rewards.support_contact_count.weight = 0.4
+            self.rewards.feet_contact_force_l2.weight = -0.02
+
+        elif TERRAIN_MODE == "mixed":
+            self.rewards.flat_orientation_l2.weight = -1.0
+            self.rewards.feet_air_time.weight = 0.05
+            self.rewards.support_contact_count.weight = 0.25
+            self.rewards.feet_contact_force_l2.weight = -0.02
+
+        else:
+            raise ValueError(
+                f"Unknown TERRAIN_MODE: {TERRAIN_MODE}. "
+                "Please use 'flat' or 'mixed'."
+            )
 
         # viewer
         self.viewer.eye = (5.0, 5.0, 4.0)
