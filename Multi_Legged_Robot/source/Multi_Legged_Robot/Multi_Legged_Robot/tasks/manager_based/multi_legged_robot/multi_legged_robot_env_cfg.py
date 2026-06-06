@@ -4,15 +4,18 @@
 """Configuration for Hugo hexapod manager-based RL environment.
 
 Goal of this version:
-- walk faster than the previous stable policy
-- reduce strange folded-leg / body-contact walking
-- keep reward terms compact by removing redundant penalties
-- use IMU-based posture stabilization instead of duplicated simulator-state posture terms
+- mixed terrain training
+- reduce reward-setting conflicts between RewardsCfg and __post_init__
+- use lower mixed-terrain command speed
+- strengthen feet_air_time to encourage stepping
+- temporarily disable support_contact_count to test whether it causes unbalanced leg usage
+- keep IMU-based posture stabilization
+- keep body-contact penalty to discourage non-foot contact walking
 
 Important:
 - enabled_self_collisions is kept False because True caused unnatural stretching.
 - IMU is used in policy observations and stability rewards.
-- Since observation space is changed, start a new training run.
+- Since observation space includes IMU, do not resume from old non-IMU checkpoints.
 """
 
 from __future__ import annotations
@@ -41,7 +44,7 @@ import isaaclab.envs.mdp as mdp
 # Paths and constants
 ##
 
-TERRAIN_MODE = "flat"  # "flat" or "mixed"
+TERRAIN_MODE = "mixed"  # "flat" or "mixed"
 
 TERRAIN_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/terrain.usd"
 ROBOT_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/hugo_hexapod_ver2/hugo_hexapod_ver2.usd"
@@ -84,7 +87,11 @@ def feet_support_count(
     threshold: float = 5.0,
     min_contacts: int = 3,
 ):
-    """Reward when at least min_contacts feet are in contact."""
+    """Reward when at least min_contacts feet are in contact.
+
+    In this version, the reward weight is set to 0.0 for mixed terrain
+    to test whether this term causes unbalanced or overly static leg usage.
+    """
     contact_sensor = env.scene[sensor_cfg.name]
     forces_w = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]
     force_norm = torch.norm(forces_w, dim=-1)
@@ -144,8 +151,7 @@ def undesired_body_contact(
 ):
     """Penalty when non-foot bodies make contact.
 
-    This is the main anti-reward-hacking term.
-    It discourages the robot from using body/leg links as support surfaces.
+    This discourages the robot from using body/leg links as support surfaces.
     """
     contact_sensor = env.scene[sensor_cfg.name]
     forces_w = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]
@@ -189,6 +195,7 @@ def imu_lin_acc_residual_b(
     At rest:
         lin_acc_b ≈ [0, 0, 9.81]
         projected_gravity_b ≈ [0, 0, -1]
+
     Therefore:
         residual = lin_acc_b + gravity * projected_gravity_b ≈ 0
     """
@@ -370,7 +377,7 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
 
 @configclass
 class CommandsCfg:
-    """Command specifications for faster revolute-only walking."""
+    """Command specifications for mixed-terrain revolute-only walking."""
 
     base_velocity = mdp.UniformVelocityCommandCfg(
         asset_name="robot",
@@ -380,10 +387,10 @@ class CommandsCfg:
         heading_command=False,
         debug_vis=False,
         ranges=mdp.UniformVelocityCommandCfg.Ranges(
-            # Faster than previous 0.15~0.45.
-            lin_vel_x=(0.3, 0.7),
+            # Base value. The actual value is also overwritten in __post_init__
+            # according to TERRAIN_MODE.
+            lin_vel_x=(0.15, 0.40),
             lin_vel_y=(-0.03, 0.03),
-            # Keep yaw moderate so forward walking is prioritized.
             ang_vel_z=(-0.12, 0.12),
         ),
     )
@@ -552,7 +559,7 @@ class EventCfg:
 
 @configclass
 class RewardsCfg:
-    """Compact reward terms for faster and less strange walking.
+    """Compact reward terms for mixed-terrain walking.
 
     Removed duplicate penalties:
     - flat_orientation_l2
@@ -582,7 +589,7 @@ class RewardsCfg:
     # ------------------------------------------------------------
     track_lin_vel_xy = RewTerm(
         func=mdp.track_lin_vel_xy_exp,
-        weight=2.5,
+        weight=3.0,
         params={
             "command_name": "base_velocity",
             "std": math.sqrt(0.25),
@@ -603,7 +610,7 @@ class RewardsCfg:
     # ------------------------------------------------------------
     feet_air_time = RewTerm(
         func=feet_air_time_reward,
-        weight=0.2,
+        weight=0.10,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=FOOT_BODY_NAMES),
             "command_name": "base_velocity",
@@ -612,6 +619,7 @@ class RewardsCfg:
         },
     )
 
+    # Temporarily disabled to test whether this reward causes unbalanced leg usage.
     support_contact_count = RewTerm(
         func=feet_support_count,
         weight=0.0,
@@ -651,7 +659,7 @@ class RewardsCfg:
     # ------------------------------------------------------------
     imu_projected_gravity_xy_l2 = RewTerm(
         func=imu_projected_gravity_xy_l2,
-        weight=-1.2,
+        weight=-0.8,
         params={
             "sensor_cfg": SceneEntityCfg("imu"),
         },
@@ -768,54 +776,56 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
         self.scene.imu.update_period = self.sim.dt
 
         if TERRAIN_MODE == "flat":
-            # Faster walking.
+            # Flat terrain setting.
             self.commands.base_velocity.ranges.lin_vel_x = (0.25, 0.65)
             self.commands.base_velocity.ranges.ang_vel_z = (-0.12, 0.12)
 
-            # Locomotion priority.
-            self.rewards.track_lin_vel_xy.weight = 3.8
+            self.rewards.track_lin_vel_xy.weight = 3.0
             self.rewards.track_ang_vel_z.weight = 0.6
 
-            # Contact / gait.
-            self.rewards.feet_air_time.weight = 0.06
-            self.rewards.support_contact_count.weight = 0.30
+            self.rewards.feet_air_time.weight = 0.10
+            self.rewards.support_contact_count.weight = 0.0
             self.rewards.feet_contact_force_l2.weight = -0.015
 
-            # Stronger anti-weird-contact.
             self.rewards.undesired_body_contact.weight = -0.6
 
-            # IMU-based stabilization.
-            self.rewards.imu_projected_gravity_xy_l2.weight = -1.2
+            self.rewards.imu_projected_gravity_xy_l2.weight = -0.8
             self.rewards.imu_ang_vel_xy_l2.weight = -0.06
             self.rewards.imu_vertical_dynamic_acc_l2.weight = -0.04
 
-            # Naturalness.
             self.rewards.action_rate_l2.weight = -0.04
             self.rewards.action_l2.weight = -0.006
-            self.rewards.joint_deviation_l2.weight = -0.10
-            self.rewards.joint_pos_limits.weight = -0.2
+            self.rewards.joint_deviation_l2.weight = -0.05
+            self.rewards.joint_pos_limits.weight = -0.15
 
         elif TERRAIN_MODE == "mixed":
-            # Slightly slower / more forgiving than flat.
-            self.commands.base_velocity.ranges.lin_vel_x = (0.20, 0.50)
+            # Mixed terrain setting.
+            # This is intentionally more conservative than the previous mixed setting.
+            self.commands.base_velocity.ranges.lin_vel_x = (0.15, 0.40)
             self.commands.base_velocity.ranges.ang_vel_z = (-0.12, 0.12)
 
-            self.rewards.track_lin_vel_xy.weight = 3.2
+            self.rewards.track_lin_vel_xy.weight = 3.0
             self.rewards.track_ang_vel_z.weight = 0.6
 
-            self.rewards.feet_air_time.weight = 0.05
-            self.rewards.support_contact_count.weight = 0.25
+            # Stronger stepping encouragement.
+            self.rewards.feet_air_time.weight = 0.10
+
+            # Temporarily disabled for experiment.
+            self.rewards.support_contact_count.weight = 0.0
+
             self.rewards.feet_contact_force_l2.weight = -0.015
 
-            self.rewards.undesired_body_contact.weight = -0.45
+            # Keep body-contact penalty strong.
+            self.rewards.undesired_body_contact.weight = -0.6
 
+            # Mixed terrain requires some body motion freedom.
             self.rewards.imu_projected_gravity_xy_l2.weight = -0.8
-            self.rewards.imu_ang_vel_xy_l2.weight = -0.05
-            self.rewards.imu_vertical_dynamic_acc_l2.weight = -0.03
+            self.rewards.imu_ang_vel_xy_l2.weight = -0.06
+            self.rewards.imu_vertical_dynamic_acc_l2.weight = -0.04
 
-            self.rewards.action_rate_l2.weight = -0.035
-            self.rewards.action_l2.weight = -0.005
-            self.rewards.joint_deviation_l2.weight = -0.07
+            self.rewards.action_rate_l2.weight = -0.04
+            self.rewards.action_l2.weight = -0.006
+            self.rewards.joint_deviation_l2.weight = -0.05
             self.rewards.joint_pos_limits.weight = -0.15
 
         else:
