@@ -439,7 +439,7 @@ class RewardsCfg:
         func=locomotion_mdp.undesired_contacts,
         weight=-1.0,
         params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*(thigh|calf|base).*"), 
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*(outside|inside|base).*"), 
             "threshold": 1.0,
         },
     )
