@@ -42,7 +42,7 @@ import isaaclab.envs.mdp as mdp
 # Paths and constants
 ##
 
-TERRAIN_MODE = "mixed"  # "flat" or "mixed"
+TERRAIN_MODE = "flat"  # "flat" or "mixed"
 
 TERRAIN_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/terrain.usd"
 ROBOT_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/hugo_hexapod_ver2/hugo_hexapod_ver2.usd"
@@ -69,8 +69,12 @@ CAMERA_PITCH_DOWN_30DEG_QUAT = (0.9659258, 0.0, 0.2588190, 0.0)
 
 # Front/head-like position relative to base_link.
 # If the camera appears too far/too close, tune x/z only.
-CAMERA_OFFSET_POS = (0.35, 0.0, 0.08)
-
+CAMERA_OFFSET_POS = (0.95, 0.0, 0.35)
+CAMERA_PITCH_DOWN_QUAT = (0.9914449, 0.0, 0.1305262, 0.0)  # 15 deg
+# D455-like low-resolution setting
+CAMERA_WIDTH = 80
+CAMERA_HEIGHT = 48
+CAMERA_UPDATE_PERIOD = 1.0 / 15.0
 
 ##
 # Body name patterns
@@ -376,7 +380,6 @@ def camera_near_obstacle_penalty(
 
     return penalty
 
-
 ##
 # Joint / posture reward functions
 ##
@@ -508,23 +511,23 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
     # so it can see the ground in front of the robot.
     front_camera = CameraCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base_link/front_camera",
-        update_period=0.0,
+        update_period=CAMERA_UPDATE_PERIOD,
         history_length=1,
         debug_vis=False,
-        height=120,
-        width=160,
-        data_types=["rgb", "depth"],
+        height=CAMERA_HEIGHT,
+        width=CAMERA_WIDTH,
+        data_types=["depth"],
         depth_clipping_behavior="max",
         update_latest_camera_pose=True,
         spawn=sim_utils.PinholeCameraCfg(
-            focal_length=24.0,
+            focal_length=11.0,
             focus_distance=400.0,
             horizontal_aperture=20.955,
-            clipping_range=(0.1, 10.0),
+            clipping_range=(0.6, 6.0),
         ),
         offset=CameraCfg.OffsetCfg(
             pos=CAMERA_OFFSET_POS,
-            rot=CAMERA_PITCH_DOWN_30DEG_QUAT,
+            rot=CAMERA_PITCH_DOWN_QUAT,
             convention="world",
         ),
     )
@@ -638,6 +641,32 @@ class ObservationsCfg:
                     "robot",
                     joint_names=[".*joint.*"],
                 )
+            },
+        )
+
+        camera_depth_grid = ObsTerm(
+            func=camera_depth_grid,
+            params={
+                "sensor_cfg": SceneEntityCfg("front_camera"),
+                "grid_h": 3,
+                "grid_w": 5,
+                "max_depth": 5.0,
+            },
+        )
+
+        camera_depth_near_min = ObsTerm(
+            func=camera_depth_near_min,
+            params={
+                "sensor_cfg": SceneEntityCfg("front_camera"),
+                "max_depth": 5.0,
+            },
+        )
+
+        camera_depth_valid_ratio = ObsTerm(
+            func=camera_depth_valid_ratio,
+            params={
+                "sensor_cfg": SceneEntityCfg("front_camera"),
+                "max_depth": 5.0,
             },
         )
 
@@ -817,6 +846,16 @@ class RewardsCfg:
         },
     )
 
+    camera_near_obstacle_penalty = RewTerm(
+        func=camera_near_obstacle_penalty,
+        weight=0.0,
+        params={
+            "sensor_cfg": SceneEntityCfg("front_camera"),
+            "min_safe_depth": 0.35,
+            "max_depth": 5.0,
+        },
+    )
+
     action_rate_l2 = RewTerm(
         func=mdp.action_rate_l2,
         weight=-0.04,
@@ -906,7 +945,7 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
         self.scene.contact_forces.update_period = self.sim.dt
         self.scene.body_contact_forces.update_period = self.sim.dt
         self.scene.imu.update_period = self.sim.dt
-        self.scene.front_camera.update_period = self.sim.dt
+        self.scene.front_camera.update_period = CAMERA_UPDATE_PERIOD
 
         if TERRAIN_MODE == "flat":
             self.commands.base_velocity.ranges.lin_vel_x = (0.25, 0.65)
