@@ -7,12 +7,14 @@ This version adds:
 - IMU sensor on base_link
 - foot contact sensor
 - full-body contact sensor
-- front RGB-D camera on base_link/front_camera
+- height scanner using RayCasterCfg
+
+Camera-related code has been fully removed.
 
 Important:
-- Camera is added only as a scene sensor.
-- Camera is NOT used in observations or rewards yet.
-- Use scripts/check_camera_sensor.py to verify camera data first.
+- Height scanner is much lighter than RGB-D camera.
+- Height scanner is added to policy observations.
+- No height-scanner-based reward is added yet.
 - enabled_self_collisions is kept False because True caused unnatural stretching.
 """
 
@@ -32,7 +34,7 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sensors import ContactSensorCfg, ImuCfg, CameraCfg
+from isaaclab.sensors import ContactSensorCfg, ImuCfg, RayCasterCfg, patterns
 from isaaclab.utils import configclass
 
 import isaaclab.envs.mdp as mdp
@@ -42,7 +44,9 @@ import isaaclab.envs.mdp as mdp
 # Paths and constants
 ##
 
-TERRAIN_MODE = "flat"  # "flat" or "mixed"
+# Change to "flat" if you want to first test on a pure plane.
+# For checking height scanner values, "mixed" is more meaningful.
+TERRAIN_MODE = "mixed"  # "flat" or "mixed"
 
 TERRAIN_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/terrain.usd"
 ROBOT_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/hugo_hexapod_ver2/hugo_hexapod_ver2.usd"
@@ -57,24 +61,32 @@ GRAVITY_MAG = 9.81
 
 
 ##
-# Camera constants
+# Height scanner constants
 ##
 
-# Camera is attached to base_link/front_camera.
-# Convention:
-# - "world": camera forward axis +X, up axis +Z.
-# - pitch down 30 deg around +Y:
-#   quaternion = (cos(15deg), 0, sin(15deg), 0)
-CAMERA_PITCH_DOWN_30DEG_QUAT = (0.9659258, 0.0, 0.2588190, 0.0)
+# Height scanner is attached to base_link.
+# It casts downward rays around and in front of the robot.
+#
+# Pattern is centered at x=0.35 m in front of base_link.
+# With size=(1.8, 1.2), the scan region roughly covers:
+#   x: -0.55 m behind base center to +1.25 m in front
+#   y: -0.60 m to +0.60 m
+#
+# Resolution 0.15 gives roughly 100-ish rays.
+# If this is still heavy, increase resolution to 0.20.
+HEIGHT_SCANNER_OFFSET_POS = (0.35, 0.0, 0.50)
+HEIGHT_SCANNER_SIZE = (1.8, 1.2)
+HEIGHT_SCANNER_RESOLUTION = 0.15
+HEIGHT_SCANNER_MAX_DISTANCE = 5.0
+HEIGHT_SCANNER_UPDATE_PERIOD = SIM_DT * DECIMATION
 
-# Front/head-like position relative to base_link.
-# If the camera appears too far/too close, tune x/z only.
-CAMERA_OFFSET_POS = (0.95, 0.0, 0.35)
-CAMERA_PITCH_DOWN_QUAT = (0.9914449, 0.0, 0.1305262, 0.0)  # 15 deg
-# D455-like low-resolution setting
-CAMERA_WIDTH = 80
-CAMERA_HEIGHT = 48
-CAMERA_UPDATE_PERIOD = 1.0 / 15.0
+# Observation scaling.
+# The observation returned by height_scan is:
+#   terrain_z - base_z + INITIAL_BODY_HEIGHT
+# So flat ground at nominal base height becomes approximately 0.
+HEIGHT_SCAN_NOMINAL_HEIGHT = 1.05
+HEIGHT_SCAN_SCALE = 1.0
+
 
 ##
 # Body name patterns
@@ -107,7 +119,7 @@ def feet_support_count(
 ):
     """Reward when at least min_contacts feet are in contact.
 
-    Currently weight is set to 0.0 in __post_init__ for mixed terrain.
+    Currently weight is set to 0.0 in __post_init__.
     """
     contact_sensor = env.scene[sensor_cfg.name]
     forces_w = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]
@@ -208,6 +220,60 @@ def imu_lin_acc_residual_b(
 
 
 ##
+# Height scanner observation function
+##
+
+def height_scan(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg,
+    nominal_height: float = HEIGHT_SCAN_NOMINAL_HEIGHT,
+    scale: float = HEIGHT_SCAN_SCALE,
+):
+    """Return normalized terrain height scan around the robot.
+
+    The RayCaster gives ray hit positions in world frame:
+        ray_hits_w: (num_envs, num_rays, 3)
+
+    We convert hit z-values into a base-relative terrain height feature:
+
+        relative_height = terrain_z - base_z + nominal_height
+
+    Interpretation:
+    - Flat ground with base at nominal height -> approximately 0
+    - Higher terrain / obstacle under scan point -> positive value
+    - Lower terrain / depression -> negative value
+
+    Output shape:
+        (num_envs, num_rays)
+    """
+    sensor = env.scene[sensor_cfg.name]
+    asset = env.scene[asset_cfg.name]
+
+    ray_hits_z = sensor.data.ray_hits_w[..., 2]
+
+    # ArticulationData normally provides root_pos_w.
+    # Fallback to root_state_w if needed.
+    if hasattr(asset.data, "root_pos_w"):
+        base_z = asset.data.root_pos_w[:, 2].unsqueeze(1)
+    else:
+        base_z = asset.data.root_state_w[:, 2].unsqueeze(1)
+
+    relative_height = ray_hits_z - base_z + nominal_height
+
+    relative_height = torch.nan_to_num(
+        relative_height,
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0,
+    )
+
+    relative_height = torch.clamp(relative_height / scale, min=-1.0, max=1.0)
+
+    return relative_height
+
+
+##
 # IMU reward functions
 ##
 
@@ -241,144 +307,6 @@ def imu_vertical_dynamic_acc_l2(
     residual_acc_b = imu.data.lin_acc_b + gravity * imu.data.projected_gravity_b
     return (residual_acc_b[:, 2] / gravity) ** 2
 
-##
-# Camera observation functions
-##
-
-def camera_depth_grid(
-    env,
-    sensor_cfg: SceneEntityCfg,
-    grid_h: int = 3,
-    grid_w: int = 5,
-    max_depth: float = 5.0,
-):
-    """Convert depth image into low-dimensional grid features.
-
-    Output shape:
-        (num_envs, grid_h * grid_w)
-
-    The depth is normalized to [0, 1].
-    Smaller value means closer terrain/object.
-    """
-    camera = env.scene[sensor_cfg.name]
-    depth = camera.data.output["depth"]
-
-    # depth: (N, H, W, 1) -> (N, H, W)
-    if depth.dim() == 4:
-        depth = depth[..., 0]
-
-    depth = torch.nan_to_num(depth, nan=max_depth, posinf=max_depth, neginf=max_depth)
-    depth = torch.clamp(depth, min=0.0, max=max_depth)
-
-    num_envs, height, width = depth.shape
-
-    cell_h = height // grid_h
-    cell_w = width // grid_w
-
-    features = []
-
-    for i in range(grid_h):
-        for j in range(grid_w):
-            y0 = i * cell_h
-            y1 = (i + 1) * cell_h if i < grid_h - 1 else height
-            x0 = j * cell_w
-            x1 = (j + 1) * cell_w if j < grid_w - 1 else width
-
-            patch = depth[:, y0:y1, x0:x1]
-            patch_mean = torch.mean(patch, dim=(1, 2))
-            features.append(patch_mean / max_depth)
-
-    return torch.stack(features, dim=1)
-
-
-def camera_depth_near_min(
-    env,
-    sensor_cfg: SceneEntityCfg,
-    max_depth: float = 5.0,
-):
-    """Minimum depth in the lower-center region.
-
-    This approximates the distance to the near-front terrain/obstacle.
-    """
-    camera = env.scene[sensor_cfg.name]
-    depth = camera.data.output["depth"]
-
-    if depth.dim() == 4:
-        depth = depth[..., 0]
-
-    depth = torch.nan_to_num(depth, nan=max_depth, posinf=max_depth, neginf=max_depth)
-    depth = torch.clamp(depth, min=0.0, max=max_depth)
-
-    _, height, width = depth.shape
-
-    # lower-center area
-    y0 = int(height * 0.55)
-    y1 = height
-    x0 = int(width * 0.35)
-    x1 = int(width * 0.65)
-
-    patch = depth[:, y0:y1, x0:x1]
-    near_min = torch.amin(patch, dim=(1, 2))
-
-    return (near_min / max_depth).unsqueeze(-1)
-
-
-def camera_depth_valid_ratio(
-    env,
-    sensor_cfg: SceneEntityCfg,
-    max_depth: float = 5.0,
-):
-    """Ratio of valid finite depth pixels."""
-    camera = env.scene[sensor_cfg.name]
-    depth = camera.data.output["depth"]
-
-    if depth.dim() == 4:
-        depth = depth[..., 0]
-
-    valid = torch.isfinite(depth) & (depth > 0.0) & (depth < max_depth)
-    ratio = torch.mean(valid.float(), dim=(1, 2))
-
-    return ratio.unsqueeze(-1)
-
-
-##
-# Camera reward functions
-##
-
-def camera_near_obstacle_penalty(
-    env,
-    sensor_cfg: SceneEntityCfg,
-    min_safe_depth: float = 0.35,
-    max_depth: float = 5.0,
-):
-    """Penalty if the lower-center camera view has very close terrain/object.
-
-    This is a pre-contact risk penalty.
-    It does not replace undesired_body_contact.
-    """
-    camera = env.scene[sensor_cfg.name]
-    depth = camera.data.output["depth"]
-
-    if depth.dim() == 4:
-        depth = depth[..., 0]
-
-    depth = torch.nan_to_num(depth, nan=max_depth, posinf=max_depth, neginf=max_depth)
-    depth = torch.clamp(depth, min=0.0, max=max_depth)
-
-    _, height, width = depth.shape
-
-    y0 = int(height * 0.55)
-    y1 = height
-    x0 = int(width * 0.35)
-    x1 = int(width * 0.65)
-
-    patch = depth[:, y0:y1, x0:x1]
-    near_min = torch.amin(patch, dim=(1, 2))
-
-    # If near_min < min_safe_depth, penalty increases.
-    penalty = torch.clamp(min_safe_depth - near_min, min=0.0) / min_safe_depth
-
-    return penalty
 
 ##
 # Joint / posture reward functions
@@ -498,37 +426,27 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
         gravity_bias=(0.0, 0.0, GRAVITY_MAG),
     )
 
-    # Front RGB-D camera.
+    # Height scanner using RayCaster.
     #
-    # Camera prim is spawned as a child of base_link:
-    #   /World/envs/env_*/Robot/base_link/front_camera
-    #
-    # Using convention="world":
-    # - camera forward axis: +X
-    # - camera up axis: +Z
-    #
-    # The quaternion below pitches the camera down by about 30 degrees,
-    # so it can see the ground in front of the robot.
-    front_camera = CameraCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/base_link/front_camera",
-        update_period=CAMERA_UPDATE_PERIOD,
+    # This sensor casts downward rays against /World/ground.
+    # ray_alignment="yaw" means the scan grid follows the robot's x-y position
+    # and yaw direction, but not roll/pitch. This is appropriate for terrain
+    # height maps on legged robots.
+    height_scanner = RayCasterCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/base_link",
+        update_period=HEIGHT_SCANNER_UPDATE_PERIOD,
         history_length=1,
         debug_vis=False,
-        height=CAMERA_HEIGHT,
-        width=CAMERA_WIDTH,
-        data_types=["depth"],
-        depth_clipping_behavior="max",
-        update_latest_camera_pose=True,
-        spawn=sim_utils.PinholeCameraCfg(
-            focal_length=11.0,
-            focus_distance=400.0,
-            horizontal_aperture=20.955,
-            clipping_range=(0.6, 6.0),
+        mesh_prim_paths=["/World/ground"],
+        ray_alignment="yaw",
+        pattern_cfg=patterns.GridPatternCfg(
+            resolution=HEIGHT_SCANNER_RESOLUTION,
+            size=HEIGHT_SCANNER_SIZE,
         ),
-        offset=CameraCfg.OffsetCfg(
-            pos=CAMERA_OFFSET_POS,
-            rot=CAMERA_PITCH_DOWN_QUAT,
-            convention="world",
+        max_distance=HEIGHT_SCANNER_MAX_DISTANCE,
+        offset=RayCasterCfg.OffsetCfg(
+            pos=HEIGHT_SCANNER_OFFSET_POS,
+            rot=(1.0, 0.0, 0.0, 0.0),
         ),
     )
 
@@ -592,7 +510,7 @@ class ObservationsCfg:
     class PolicyCfg(ObsGroup):
         """Policy observations.
 
-        Camera is NOT included here yet.
+        Height scanner is included here.
         """
 
         base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
@@ -619,6 +537,16 @@ class ObservationsCfg:
             },
         )
 
+        height_scan = ObsTerm(
+            func=height_scan,
+            params={
+                "sensor_cfg": SceneEntityCfg("height_scanner"),
+                "asset_cfg": SceneEntityCfg("robot"),
+                "nominal_height": HEIGHT_SCAN_NOMINAL_HEIGHT,
+                "scale": HEIGHT_SCAN_SCALE,
+            },
+        )
+
         velocity_commands = ObsTerm(
             func=mdp.generated_commands,
             params={"command_name": "base_velocity"},
@@ -641,32 +569,6 @@ class ObservationsCfg:
                     "robot",
                     joint_names=[".*joint.*"],
                 )
-            },
-        )
-
-        camera_depth_grid = ObsTerm(
-            func=camera_depth_grid,
-            params={
-                "sensor_cfg": SceneEntityCfg("front_camera"),
-                "grid_h": 3,
-                "grid_w": 5,
-                "max_depth": 5.0,
-            },
-        )
-
-        camera_depth_near_min = ObsTerm(
-            func=camera_depth_near_min,
-            params={
-                "sensor_cfg": SceneEntityCfg("front_camera"),
-                "max_depth": 5.0,
-            },
-        )
-
-        camera_depth_valid_ratio = ObsTerm(
-            func=camera_depth_valid_ratio,
-            params={
-                "sensor_cfg": SceneEntityCfg("front_camera"),
-                "max_depth": 5.0,
             },
         )
 
@@ -748,7 +650,7 @@ class EventCfg:
 class RewardsCfg:
     """Compact reward terms for mixed-terrain walking.
 
-    Camera is NOT used in rewards yet.
+    Height scanner is currently used only in observations, not rewards.
     """
 
     is_alive = RewTerm(
@@ -846,16 +748,6 @@ class RewardsCfg:
         },
     )
 
-    camera_near_obstacle_penalty = RewTerm(
-        func=camera_near_obstacle_penalty,
-        weight=0.0,
-        params={
-            "sensor_cfg": SceneEntityCfg("front_camera"),
-            "min_safe_depth": 0.35,
-            "max_depth": 5.0,
-        },
-    )
-
     action_rate_l2 = RewTerm(
         func=mdp.action_rate_l2,
         weight=-0.04,
@@ -945,7 +837,7 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
         self.scene.contact_forces.update_period = self.sim.dt
         self.scene.body_contact_forces.update_period = self.sim.dt
         self.scene.imu.update_period = self.sim.dt
-        self.scene.front_camera.update_period = CAMERA_UPDATE_PERIOD
+        self.scene.height_scanner.update_period = HEIGHT_SCANNER_UPDATE_PERIOD
 
         if TERRAIN_MODE == "flat":
             self.commands.base_velocity.ranges.lin_vel_x = (0.25, 0.65)
