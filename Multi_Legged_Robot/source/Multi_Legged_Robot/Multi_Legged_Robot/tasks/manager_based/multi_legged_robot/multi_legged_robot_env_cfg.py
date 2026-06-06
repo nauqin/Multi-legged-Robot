@@ -36,6 +36,7 @@ from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
 import isaaclab_tasks.manager_based.locomotion.velocity.mdp as locomotion_mdp
 from isaaclab.terrains import TerrainImporterCfg
+import Multi_Legged_Robot.tasks.manager_based.multi_legged_robot.mdp as hugo_mdp
 
 # IsaacLab official MDP terms
 import isaaclab.envs.mdp as mdp
@@ -165,12 +166,12 @@ class CommandsCfg:
     base_velocity = mdp.UniformVelocityCommandCfg(
         asset_name="robot",
         resampling_time_range=(8.0, 8.0),
-        rel_standing_envs=0.0,
+        rel_standing_envs=0.1,
         rel_heading_envs=0.0,
         heading_command=False,
         debug_vis=False,
         ranges=mdp.UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(0.15, 0.45),
+            lin_vel_x=(0.30, 0.70),
             lin_vel_y=(-0.03, 0.03),
             ang_vel_z=(-0.15, 0.15),
         ),
@@ -265,6 +266,13 @@ class ObservationsCfg:
         joint_vel = ObsTerm(
             func=mdp.joint_vel_rel,
             params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*joint.*"])},
+        )
+
+        feet_contact = ObsTerm(
+            func=hugo_mdp.feet_contact_state,
+            params={
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_feet"),
+                "threshold": 1.0,},
         )
 
         # previous action: now contains revolute action only
@@ -427,11 +435,11 @@ class RewardsCfg:
 
     feet_air_time = RewTerm(
         func=locomotion_mdp.feet_air_time, 
-        weight=0.5,
+        weight=0.5,#수정 후보 0.5-> 1.0
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*feet.*"),
             "command_name": "base_velocity",
-            "threshold": 0.5,
+            "threshold": 1.0,
         },
     )
 
