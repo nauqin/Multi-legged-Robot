@@ -770,7 +770,7 @@ class RewardsCfg:
 
     imu_projected_gravity_xy_l2 = RewTerm(
         func=imu_projected_gravity_xy_l2,
-        weight=-0.9,
+        weight=-0.5,
         params={
             "sensor_cfg": SceneEntityCfg("imu"),
         },

@@ -66,7 +66,7 @@ SUB_TERRAIN_SIZE = (8.0, 8.0)
 
 # num_rows controls difficulty levels.
 # With curriculum=True, row 0 is easy and later rows become harder.
-NUM_ROWS = 10
+NUM_ROWS = 64
 
 # num_cols controls terrain-type distribution.
 # Since 20 columns and 20/30/30/20 ratio:
@@ -74,7 +74,7 @@ NUM_ROWS = 10
 #   random_grid -> about 6 columns
 #   slope       -> about 6 columns
 #   stairs      -> about 4 columns
-NUM_COLS = 20
+NUM_COLS = 64
 
 # Difficulty range used for curriculum.
 # Smaller upper bound makes all terrains easier.
