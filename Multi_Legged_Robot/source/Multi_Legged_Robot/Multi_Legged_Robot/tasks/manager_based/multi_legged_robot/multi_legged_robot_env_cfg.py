@@ -747,7 +747,7 @@ class RewardsCfg:
 
     imu_projected_gravity_xy_l2 = RewTerm(
         func=imu_projected_gravity_xy_l2,
-        weight=-0.5,
+        weight=-0.3,
         params={
             "sensor_cfg": SceneEntityCfg("imu"),
         },
@@ -879,7 +879,7 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
 
         self.rewards.undesired_body_contact.weight = -1.0
 
-        self.rewards.imu_projected_gravity_xy_l2.weight = -0.8
+        self.rewards.imu_projected_gravity_xy_l2.weight = -0.4
         self.rewards.imu_ang_vel_xy_l2.weight = -0.07
         self.rewards.imu_vertical_dynamic_acc_l2.weight = -0.04
 
