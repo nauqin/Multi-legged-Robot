@@ -33,10 +33,10 @@ import isaaclab.terrains as terrain_gen
 #
 # Recommended first setting:
 #   flat 20%, random grid 30%, slope 30%, stairs 20%
-FLAT_RATIO = 20.0
-RANDOM_GRID_RATIO = 30.0
-SLOPE_RATIO = 30.0
-STAIRS_RATIO = 20.0
+FLAT_RATIO = 100.0
+RANDOM_GRID_RATIO = 0.0
+SLOPE_RATIO = 0.0
+STAIRS_RATIO = 0.0
 
 
 def _normalize_ratio(value: float, total: float) -> float:

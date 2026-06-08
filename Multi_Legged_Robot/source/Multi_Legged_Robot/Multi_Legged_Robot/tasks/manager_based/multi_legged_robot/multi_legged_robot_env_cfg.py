@@ -10,6 +10,7 @@ This version includes:
 - foot contact sensor
 - full-body contact sensor
 - height scanner using RayCasterCfg
+- foot contact state observation
 - no RGB-D camera code
 
 Recommended first terrain mode:
@@ -17,6 +18,7 @@ Recommended first terrain mode:
 
 Notes:
 - Height scanner is used in policy observations.
+- Foot contact state is used in policy observations.
 - No height-scanner-based reward is added yet.
 - enabled_self_collisions is kept False because True caused unnatural stretching.
 """
@@ -72,9 +74,11 @@ ENV_SPACING = 4.0
 # Random-grid terrain configuration
 ##
 
-# IsaacLab rough.py contains a similar "boxes" terrain:
-# MeshRandomGridTerrainCfg(grid_width=0.45, grid_height_range=(0.05, 0.2), platform_width=2.0)
-# Here we isolate that terrain type and start a little easier.
+# NOTE:
+# This block is kept for compatibility/history, but make_terrain_cfg() currently
+# returns HUGO_RANDOM_GRID_TERRAIN_IMPORTER_CFG imported from random_grid_terrain_cfg.py.
+# If you want to avoid confusion, this local HUGO_RANDOM_GRID_TERRAINS_CFG block
+# can be removed later after confirming your external terrain cfg works.
 HUGO_RANDOM_GRID_TERRAINS_CFG = terrain_gen.TerrainGeneratorCfg(
     seed=42,
     curriculum=True,
@@ -138,7 +142,7 @@ def make_terrain_cfg():
 
     elif TERRAIN_MODE == "random_grid":
         return HUGO_RANDOM_GRID_TERRAIN_IMPORTER_CFG
-    
+
     else:
         raise ValueError(
             f"Unknown TERRAIN_MODE: {TERRAIN_MODE}. "
@@ -188,7 +192,7 @@ NON_FOOT_BODY_NAMES = [
 
 
 ##
-# Contact reward functions
+# Contact reward / observation functions
 ##
 
 def feet_support_count(
@@ -261,6 +265,38 @@ def undesired_body_contact(
     contact_count = torch.sum(contacts.float(), dim=1)
 
     return contact_count
+
+
+def feet_contact_state(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    threshold: float = 1.0,
+):
+    """Return binary foot contact state as policy observation.
+
+    Output:
+        (num_envs, num_feet)
+
+    Each value is:
+        1.0 if the corresponding foot had contact force larger than threshold
+        0.0 otherwise
+
+    This uses contact history and takes max over the history dimension.
+    Therefore, a foot is considered in contact if it contacted the ground
+    at least once during the recent contact history window.
+    """
+    contact_sensor = env.scene[sensor_cfg.name]
+
+    # net_forces_w_history shape:
+    #   (num_envs, history_length, num_bodies, 3)
+    forces = (
+        contact_sensor.data.net_forces_w_history[:, :, sensor_cfg.body_ids, :]
+        .norm(dim=-1)
+        .max(dim=1)[0]
+    )
+
+    contacts = forces > threshold
+    return contacts.float()
 
 
 ##
@@ -555,7 +591,7 @@ class ObservationsCfg:
     class PolicyCfg(ObsGroup):
         """Policy observations.
 
-        Height scanner is included here.
+        Height scanner and foot contact state are included here.
         """
 
         base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
@@ -589,6 +625,17 @@ class ObservationsCfg:
                 "asset_cfg": SceneEntityCfg("robot"),
                 "nominal_height": HEIGHT_SCAN_NOMINAL_HEIGHT,
                 "scale": HEIGHT_SCAN_SCALE,
+            },
+        )
+
+        # New observation:
+        # Binary contact state for each foot.
+        # For a 6-legged robot, this usually adds 6 dimensions.
+        feet_contact = ObsTerm(
+            func=feet_contact_state,
+            params={
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=FOOT_BODY_NAMES),
+                "threshold": 1.0,
             },
         )
 
@@ -695,7 +742,7 @@ class EventCfg:
 class RewardsCfg:
     """Compact reward terms for rough-terrain walking.
 
-    Height scanner is currently used only in observations, not rewards.
+    Height scanner and foot contact state are currently used only in observations, not rewards.
     """
 
     is_alive = RewTerm(
@@ -930,7 +977,7 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
 
         elif TERRAIN_MODE == "random_grid":
             # Start easier than full mixed terrain.
-            self.commands.base_velocity.ranges.lin_vel_x = (0.10, 0.35)
+            self.commands.base_velocity.ranges.lin_vel_x = (0.30, 0.75)
             self.commands.base_velocity.ranges.ang_vel_z = (-0.10, 0.10)
 
             self.rewards.track_lin_vel_xy.weight = 3.0
