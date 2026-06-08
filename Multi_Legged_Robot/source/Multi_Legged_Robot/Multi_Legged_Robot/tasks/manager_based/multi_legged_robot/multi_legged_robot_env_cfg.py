@@ -223,12 +223,12 @@ class ActionsCfg:
     )
 
     # Disabled for first-stage revolute-only walking.
-    # prismatic_pos = mdp.JointPositionActionCfg(
-    #     asset_name="robot",
-    #     joint_names=[".*prismatic.*"],
-    #     scale=0.04,
-    #     use_default_offset=True,
-    # )
+    prismatic_pos = mdp.JointPositionActionCfg(
+        asset_name="robot",
+        joint_names=[".*prismatic.*"],
+        scale=0.01,
+        use_default_offset=True,
+    )
 
     # revolute_pos = mdp.JointPositionActionCfg(
     #     asset_name="robot",
@@ -320,6 +320,24 @@ class ObservationsCfg:
                 "contact_forces",
                 body_names=".*_feet",
             ),},
+        )
+
+        prismatic_joint_pos = ObsTerm(
+        func=mdp.joint_pos_rel,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=[".*prismatic.*"],)
+            },
+        )
+
+        prismatic_joint_vel = ObsTerm(
+        func=mdp.joint_vel_rel,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=[".*prismatic.*"],)
+            },
         )
 
         # previous action: now contains revolute action only
