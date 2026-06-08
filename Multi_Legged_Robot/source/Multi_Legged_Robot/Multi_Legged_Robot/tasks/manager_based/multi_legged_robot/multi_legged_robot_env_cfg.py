@@ -3,17 +3,20 @@
 
 """Configuration for Hugo hexapod manager-based RL environment.
 
-This version adds:
+This version includes:
+- flat / usd_mixed / random_grid terrain modes
+- random-grid rough terrain using MeshRandomGridTerrainCfg
 - IMU sensor on base_link
 - foot contact sensor
 - full-body contact sensor
 - height scanner using RayCasterCfg
+- no RGB-D camera code
 
-Camera-related code has been fully removed.
+Recommended first terrain mode:
+    TERRAIN_MODE = "random_grid"
 
-Important:
-- Height scanner is much lighter than RGB-D camera.
-- Height scanner is added to policy observations.
+Notes:
+- Height scanner is used in policy observations.
 - No height-scanner-based reward is added yet.
 - enabled_self_collisions is kept False because True caused unnatural stretching.
 """
@@ -24,6 +27,9 @@ import math
 import torch
 
 import isaaclab.sim as sim_utils
+import isaaclab.terrains as terrain_gen
+import isaaclab.envs.mdp as mdp
+
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
@@ -37,16 +43,16 @@ from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg, ImuCfg, RayCasterCfg, patterns
 from isaaclab.utils import configclass
 
-import isaaclab.envs.mdp as mdp
-
 
 ##
 # Paths and constants
 ##
 
-# Change to "flat" if you want to first test on a pure plane.
-# For checking height scanner values, "mixed" is more meaningful.
-TERRAIN_MODE = "mixed"  # "flat" or "mixed"
+# Available modes:
+#   "flat"        : pure flat plane
+#   "usd_mixed"   : your saved USD terrain
+#   "random_grid" : procedural bumpy grid terrain
+TERRAIN_MODE = "random_grid"
 
 TERRAIN_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/terrain.usd"
 ROBOT_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/hugo_hexapod_ver2/hugo_hexapod_ver2.usd"
@@ -58,34 +64,117 @@ SIM_DT = 1.0 / 200.0
 DECIMATION = 4
 
 GRAVITY_MAG = 9.81
+ENV_SPACING = 4.0
+
+
+##
+# Random-grid terrain configuration
+##
+
+# IsaacLab rough.py contains a similar "boxes" terrain:
+# MeshRandomGridTerrainCfg(grid_width=0.45, grid_height_range=(0.05, 0.2), platform_width=2.0)
+# Here we isolate that terrain type and start a little easier.
+HUGO_RANDOM_GRID_TERRAINS_CFG = terrain_gen.TerrainGeneratorCfg(
+    seed=42,
+    curriculum=True,
+    size=(8.0, 8.0),
+    border_width=20.0,
+    border_height=1.0,
+    num_rows=10,
+    num_cols=20,
+    horizontal_scale=0.1,
+    vertical_scale=0.005,
+    slope_threshold=0.75,
+    color_scheme="none",
+    difficulty_range=(0.0, 1.0),
+    use_cache=True,
+    cache_dir="/tmp/isaaclab/hugo_random_grid_terrains",
+    sub_terrains={
+        "random_grid_rough": terrain_gen.MeshRandomGridTerrainCfg(
+            proportion=1.0,
+            grid_width=0.35,
+            grid_height_range=(0.03, 0.14),
+            platform_width=2.0,
+            holes=False,
+        ),
+    },
+)
+
+
+def make_terrain_cfg():
+    """Create terrain config based on TERRAIN_MODE."""
+
+    terrain_physics_material = sim_utils.RigidBodyMaterialCfg(
+        static_friction=1.0,
+        dynamic_friction=1.0,
+        restitution=0.0,
+    )
+
+    terrain_visual_material = sim_utils.PreviewSurfaceCfg(
+        diffuse_color=(0.75, 0.75, 0.75),
+    )
+
+    if TERRAIN_MODE == "flat":
+        return terrain_gen.TerrainImporterCfg(
+            prim_path="/World/ground",
+            terrain_type="plane",
+            env_spacing=ENV_SPACING,
+            physics_material=terrain_physics_material,
+            visual_material=terrain_visual_material,
+            debug_vis=False,
+        )
+
+    elif TERRAIN_MODE == "usd_mixed":
+        return terrain_gen.TerrainImporterCfg(
+            prim_path="/World/ground",
+            terrain_type="usd",
+            usd_path=TERRAIN_USD_PATH,
+            env_spacing=ENV_SPACING,
+            physics_material=terrain_physics_material,
+            visual_material=terrain_visual_material,
+            debug_vis=False,
+        )
+
+    elif TERRAIN_MODE == "random_grid":
+        return terrain_gen.TerrainImporterCfg(
+            prim_path="/World/ground",
+            terrain_type="generator",
+            terrain_generator=HUGO_RANDOM_GRID_TERRAINS_CFG,
+            use_terrain_origins=True,
+            max_init_terrain_level=2,
+            env_spacing=ENV_SPACING,
+            physics_material=terrain_physics_material,
+            visual_material=terrain_visual_material,
+            debug_vis=False,
+        )
+
+    else:
+        raise ValueError(
+            f"Unknown TERRAIN_MODE: {TERRAIN_MODE}. "
+            "Use 'flat', 'usd_mixed', or 'random_grid'."
+        )
 
 
 ##
 # Height scanner constants
 ##
 
-# Height scanner is attached to base_link.
-# It casts downward rays around and in front of the robot.
-#
-# Pattern is centered at x=0.35 m in front of base_link.
-# With size=(1.8, 1.2), the scan region roughly covers:
-#   x: -0.55 m behind base center to +1.25 m in front
-#   y: -0.60 m to +0.60 m
-#
-# Resolution 0.15 gives roughly 100-ish rays.
-# If this is still heavy, increase resolution to 0.20.
 HEIGHT_SCANNER_OFFSET_POS = (0.35, 0.0, 0.50)
 HEIGHT_SCANNER_SIZE = (1.8, 1.2)
 HEIGHT_SCANNER_RESOLUTION = 0.15
 HEIGHT_SCANNER_MAX_DISTANCE = 5.0
 HEIGHT_SCANNER_UPDATE_PERIOD = SIM_DT * DECIMATION
 
-# Observation scaling.
-# The observation returned by height_scan is:
-#   terrain_z - base_z + INITIAL_BODY_HEIGHT
-# So flat ground at nominal base height becomes approximately 0.
+# Adjusted from check_height_scanner.py.
 HEIGHT_SCAN_NOMINAL_HEIGHT = 1.05
 HEIGHT_SCAN_SCALE = 1.0
+
+# TerrainImporter with terrain_type="generator" creates mesh under:
+# /World/ground/terrain
+if TERRAIN_MODE == "random_grid":
+    HEIGHT_SCANNER_MESH_PRIM_PATHS = ["/World/ground/terrain"]
+else:
+    HEIGHT_SCANNER_MESH_PRIM_PATHS = ["/World/ground"]
 
 
 ##
@@ -117,10 +206,7 @@ def feet_support_count(
     threshold: float = 5.0,
     min_contacts: int = 3,
 ):
-    """Reward when at least min_contacts feet are in contact.
-
-    Currently weight is set to 0.0 in __post_init__.
-    """
+    """Reward when at least min_contacts feet are in contact."""
     contact_sensor = env.scene[sensor_cfg.name]
     forces_w = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]
     force_norm = torch.norm(forces_w, dim=-1)
@@ -232,28 +318,15 @@ def height_scan(
 ):
     """Return normalized terrain height scan around the robot.
 
-    The RayCaster gives ray hit positions in world frame:
-        ray_hits_w: (num_envs, num_rays, 3)
+    relative_height = terrain_z - base_z + nominal_height
 
-    We convert hit z-values into a base-relative terrain height feature:
-
-        relative_height = terrain_z - base_z + nominal_height
-
-    Interpretation:
-    - Flat ground with base at nominal height -> approximately 0
-    - Higher terrain / obstacle under scan point -> positive value
-    - Lower terrain / depression -> negative value
-
-    Output shape:
-        (num_envs, num_rays)
+    Flat ground with base at nominal height should be close to zero.
     """
     sensor = env.scene[sensor_cfg.name]
     asset = env.scene[asset_cfg.name]
 
     ray_hits_z = sensor.data.ray_hits_w[..., 2]
 
-    # ArticulationData normally provides root_pos_w.
-    # Fallback to root_state_w if needed.
     if hasattr(asset.data, "root_pos_w"):
         base_z = asset.data.root_pos_w[:, 2].unsqueeze(1)
     else:
@@ -333,22 +406,7 @@ def joint_deviation_l2(
 class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
     """Scene configuration for Hugo hexapod."""
 
-    if TERRAIN_MODE == "flat":
-        terrain = AssetBaseCfg(
-            prim_path="/World/ground",
-            spawn=sim_utils.GroundPlaneCfg(),
-        )
-
-    elif TERRAIN_MODE == "mixed":
-        terrain = AssetBaseCfg(
-            prim_path="/World/ground",
-            spawn=sim_utils.UsdFileCfg(
-                usd_path=TERRAIN_USD_PATH,
-            ),
-        )
-
-    else:
-        raise ValueError(f"Unknown TERRAIN_MODE: {TERRAIN_MODE}. Use 'flat' or 'mixed'.")
+    terrain = make_terrain_cfg()
 
     robot = ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
@@ -427,17 +485,12 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
     )
 
     # Height scanner using RayCaster.
-    #
-    # This sensor casts downward rays against /World/ground.
-    # ray_alignment="yaw" means the scan grid follows the robot's x-y position
-    # and yaw direction, but not roll/pitch. This is appropriate for terrain
-    # height maps on legged robots.
     height_scanner = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base_link",
         update_period=HEIGHT_SCANNER_UPDATE_PERIOD,
         history_length=1,
         debug_vis=False,
-        mesh_prim_paths=["/World/ground"],
+        mesh_prim_paths=HEIGHT_SCANNER_MESH_PRIM_PATHS,
         ray_alignment="yaw",
         pattern_cfg=patterns.GridPatternCfg(
             resolution=HEIGHT_SCANNER_RESOLUTION,
@@ -450,6 +503,7 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
         ),
     )
 
+    # Light must be wrapped by AssetBaseCfg inside InteractiveSceneCfg.
     dome_light = AssetBaseCfg(
         prim_path="/World/DomeLight",
         spawn=sim_utils.DomeLightCfg(
@@ -465,7 +519,7 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
 
 @configclass
 class CommandsCfg:
-    """Command specifications for mixed-terrain revolute-only walking."""
+    """Command specifications for revolute-only walking."""
 
     base_velocity = mdp.UniformVelocityCommandCfg(
         asset_name="robot",
@@ -475,9 +529,9 @@ class CommandsCfg:
         heading_command=False,
         debug_vis=False,
         ranges=mdp.UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(0.15, 0.40),
+            lin_vel_x=(0.10, 0.35),
             lin_vel_y=(-0.03, 0.03),
-            ang_vel_z=(-0.12, 0.12),
+            ang_vel_z=(-0.10, 0.10),
         ),
     )
 
@@ -648,7 +702,7 @@ class EventCfg:
 
 @configclass
 class RewardsCfg:
-    """Compact reward terms for mixed-terrain walking.
+    """Compact reward terms for rough-terrain walking.
 
     Height scanner is currently used only in observations, not rewards.
     """
@@ -674,7 +728,7 @@ class RewardsCfg:
 
     track_ang_vel_z = RewTerm(
         func=mdp.track_ang_vel_z_exp,
-        weight=0.6,
+        weight=0.5,
         params={
             "command_name": "base_velocity",
             "std": math.sqrt(0.25),
@@ -713,7 +767,7 @@ class RewardsCfg:
 
     undesired_body_contact = RewTerm(
         func=undesired_body_contact,
-        weight=-0.6,
+        weight=-0.7,
         params={
             "sensor_cfg": SceneEntityCfg(
                 "body_contact_forces",
@@ -725,7 +779,7 @@ class RewardsCfg:
 
     imu_projected_gravity_xy_l2 = RewTerm(
         func=imu_projected_gravity_xy_l2,
-        weight=-0.8,
+        weight=-0.9,
         params={
             "sensor_cfg": SceneEntityCfg("imu"),
         },
@@ -733,7 +787,7 @@ class RewardsCfg:
 
     imu_ang_vel_xy_l2 = RewTerm(
         func=imu_ang_vel_xy_l2,
-        weight=-0.06,
+        weight=-0.07,
         params={
             "sensor_cfg": SceneEntityCfg("imu"),
         },
@@ -815,7 +869,7 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
 
     scene: MultiLeggedRobotSceneCfg = MultiLeggedRobotSceneCfg(
         num_envs=4096,
-        env_spacing=4.0,
+        env_spacing=ENV_SPACING,
     )
 
     observations: ObservationsCfg = ObservationsCfg()
@@ -861,7 +915,7 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
             self.rewards.joint_deviation_l2.weight = -0.05
             self.rewards.joint_pos_limits.weight = -0.15
 
-        elif TERRAIN_MODE == "mixed":
+        elif TERRAIN_MODE == "usd_mixed":
             self.commands.base_velocity.ranges.lin_vel_x = (0.15, 0.40)
             self.commands.base_velocity.ranges.ang_vel_z = (-0.12, 0.12)
 
@@ -883,8 +937,34 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
             self.rewards.joint_deviation_l2.weight = -0.05
             self.rewards.joint_pos_limits.weight = -0.15
 
+        elif TERRAIN_MODE == "random_grid":
+            # Start easier than full mixed terrain.
+            self.commands.base_velocity.ranges.lin_vel_x = (0.10, 0.35)
+            self.commands.base_velocity.ranges.ang_vel_z = (-0.10, 0.10)
+
+            self.rewards.track_lin_vel_xy.weight = 3.0
+            self.rewards.track_ang_vel_z.weight = 0.5
+
+            self.rewards.feet_air_time.weight = 0.10
+            self.rewards.support_contact_count.weight = 0.0
+            self.rewards.feet_contact_force_l2.weight = -0.015
+
+            self.rewards.undesired_body_contact.weight = -0.7
+
+            self.rewards.imu_projected_gravity_xy_l2.weight = -0.9
+            self.rewards.imu_ang_vel_xy_l2.weight = -0.07
+            self.rewards.imu_vertical_dynamic_acc_l2.weight = -0.04
+
+            self.rewards.action_rate_l2.weight = -0.04
+            self.rewards.action_l2.weight = -0.006
+            self.rewards.joint_deviation_l2.weight = -0.05
+            self.rewards.joint_pos_limits.weight = -0.15
+
         else:
-            raise ValueError(f"Unknown TERRAIN_MODE: {TERRAIN_MODE}. Use 'flat' or 'mixed'.")
+            raise ValueError(
+                f"Unknown TERRAIN_MODE: {TERRAIN_MODE}. "
+                "Use 'flat', 'usd_mixed', or 'random_grid'."
+            )
 
         self.viewer.eye = (5.0, 5.0, 4.0)
         self.viewer.lookat = (0.0, 0.0, 0.5)
