@@ -10,6 +10,7 @@ This version includes:
 - full-body contact sensor
 - height scanner using RayCasterCfg
 - foot contact state observation
+- roll/pitch separated revolute actions
 - no RGB-D camera code
 
 Notes:
@@ -17,6 +18,9 @@ Notes:
 - Foot contact state is used in policy observations.
 - No height-scanner-based reward is added yet.
 - enabled_self_collisions is kept False because True caused unnatural stretching.
+- Revolute actions are separated into roll and pitch groups:
+    roll  : smaller action scale for posture stabilization
+    pitch : larger action scale for walking motion
 """
 
 from __future__ import annotations
@@ -39,6 +43,7 @@ from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg, ImuCfg, RayCasterCfg, patterns
 from isaaclab.utils import configclass
+
 from .random_grid_terrain_cfg import HUGO_RANDOM_GRID_TERRAIN_IMPORTER_CFG
 
 
@@ -462,7 +467,7 @@ class CommandsCfg:
         heading_command=False,
         debug_vis=False,
         ranges=mdp.UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(0.10, 0.35),
+            lin_vel_x=(0.30, 0.70),
             lin_vel_y=(-0.03, 0.03),
             ang_vel_z=(-0.10, 0.10),
         ),
@@ -475,12 +480,32 @@ class CommandsCfg:
 
 @configclass
 class ActionsCfg:
-    """Action specifications for revolute-only training."""
+    """Action specifications for revolute-only training.
 
-    revolute_pos = mdp.JointPositionActionCfg(
+    Revolute joints are separated into roll and pitch groups.
+
+    Reason:
+    - Roll joints mainly affect lateral posture and leg spreading.
+    - Pitch joints mainly generate stepping and forward walking motion.
+    - Giving the same action scale to all revolute joints can make roll joints move too much,
+      causing leg crossing, excessive lateral swinging, or unstable body posture.
+    """
+
+    # Roll joints:
+    # Small scale because roll motion is mainly for posture / lateral adjustment.
+    roll_pos = mdp.JointPositionActionCfg(
         asset_name="robot",
-        joint_names=[".*joint.*"],
-        scale=0.15,
+        joint_names=[".*joint1_roll"],
+        scale=0.05,
+        use_default_offset=True,
+    )
+
+    # Pitch joints:
+    # Larger scale because pitch motion creates most of the walking swing/stance movement.
+    pitch_pos = mdp.JointPositionActionCfg(
+        asset_name="robot",
+        joint_names=[".*joint2_pitch", ".*joint3_pitch"],
+        scale=0.18,
         use_default_offset=True,
     )
 
@@ -534,7 +559,6 @@ class ObservationsCfg:
             },
         )
 
-        # New observation:
         # Binary contact state for each foot.
         # For a 6-legged robot, this usually adds 6 dimensions.
         feet_contact = ObsTerm(
@@ -681,7 +705,7 @@ class RewardsCfg:
 
     feet_air_time = RewTerm(
         func=feet_air_time_reward,
-        weight=0.10,
+        weight=0.15,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=FOOT_BODY_NAMES),
             "command_name": "base_velocity",
@@ -840,24 +864,27 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
         # Terrain is controlled externally by random_grid_terrain_cfg.py.
         # These command/reward settings are the default settings used for the current
         # customizable mixed terrain.
-        self.commands.base_velocity.ranges.lin_vel_x = (0.30, 0.75)
+
+        # For early rough-terrain adaptation, slower commands are safer.
+        # If the robot becomes stable, gradually increase upper speed.
+        self.commands.base_velocity.ranges.lin_vel_x = (0.10, 0.35)
         self.commands.base_velocity.ranges.ang_vel_z = (-0.10, 0.10)
 
         self.rewards.track_lin_vel_xy.weight = 3.0
         self.rewards.track_ang_vel_z.weight = 0.5
 
-        self.rewards.feet_air_time.weight = 0.10
+        self.rewards.feet_air_time.weight = 0.20
         self.rewards.support_contact_count.weight = 0.0
         self.rewards.feet_contact_force_l2.weight = -0.015
 
-        self.rewards.undesired_body_contact.weight = -0.7
+        self.rewards.undesired_body_contact.weight = -1.0
 
-        self.rewards.imu_projected_gravity_xy_l2.weight = -0.9
+        self.rewards.imu_projected_gravity_xy_l2.weight = -0.8
         self.rewards.imu_ang_vel_xy_l2.weight = -0.07
         self.rewards.imu_vertical_dynamic_acc_l2.weight = -0.04
 
-        self.rewards.action_rate_l2.weight = -0.04
-        self.rewards.action_l2.weight = -0.006
+        self.rewards.action_rate_l2.weight = -0.06
+        self.rewards.action_l2.weight = -0.008
         self.rewards.joint_deviation_l2.weight = -0.05
         self.rewards.joint_pos_limits.weight = -0.15
 

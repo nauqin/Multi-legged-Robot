@@ -33,8 +33,8 @@ import isaaclab.terrains as terrain_gen
 #
 # Recommended first setting:
 #   flat 20%, random grid 30%, slope 30%, stairs 20%
-FLAT_RATIO = 70.0
-RANDOM_GRID_RATIO = 30.0
+FLAT_RATIO = 100.0
+RANDOM_GRID_RATIO = 0.0
 SLOPE_RATIO = 0.0
 STAIRS_RATIO = 0.0
 
@@ -82,7 +82,7 @@ DIFFICULTY_RANGE = (0.0, 1.0)
 #   1. change CACHE_DIR, or
 #   2. delete the old cache directory.
 
-TERRAIN_PROFILE = "play"
+TERRAIN_PROFILE = "train"
 
 if TERRAIN_PROFILE == "train":
     NUM_ROWS = 8
