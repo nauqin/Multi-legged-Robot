@@ -4,17 +4,13 @@
 """Configuration for Hugo hexapod manager-based RL environment.
 
 This version includes:
-- flat / usd_mixed / random_grid terrain modes
-- random-grid rough terrain using MeshRandomGridTerrainCfg
+- one external customizable terrain configuration from random_grid_terrain_cfg.py
 - IMU sensor on base_link
 - foot contact sensor
 - full-body contact sensor
 - height scanner using RayCasterCfg
 - foot contact state observation
 - no RGB-D camera code
-
-Recommended first terrain mode:
-    TERRAIN_MODE = "random_grid"
 
 Notes:
 - Height scanner is used in policy observations.
@@ -29,7 +25,6 @@ import math
 import torch
 
 import isaaclab.sim as sim_utils
-import isaaclab.terrains as terrain_gen
 import isaaclab.envs.mdp as mdp
 
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
@@ -51,13 +46,8 @@ from .random_grid_terrain_cfg import HUGO_RANDOM_GRID_TERRAIN_IMPORTER_CFG
 # Paths and constants
 ##
 
-# Available modes:
-#   "flat"        : pure flat plane
-#   "usd_mixed"   : your saved USD terrain
-#   "random_grid" : procedural bumpy grid terrain
-TERRAIN_MODE = "random_grid"
-
-TERRAIN_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/terrain.usd"
+# Terrain is defined in random_grid_terrain_cfg.py.
+# Edit that file to change flat/rough/slope/stairs ratios and difficulty.
 ROBOT_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/hugo_hexapod_ver2/hugo_hexapod_ver2.usd"
 
 INITIAL_BODY_HEIGHT = 1.75
@@ -68,86 +58,6 @@ DECIMATION = 4
 
 GRAVITY_MAG = 9.81
 ENV_SPACING = 4.0
-
-
-##
-# Random-grid terrain configuration
-##
-
-# NOTE:
-# This block is kept for compatibility/history, but make_terrain_cfg() currently
-# returns HUGO_RANDOM_GRID_TERRAIN_IMPORTER_CFG imported from random_grid_terrain_cfg.py.
-# If you want to avoid confusion, this local HUGO_RANDOM_GRID_TERRAINS_CFG block
-# can be removed later after confirming your external terrain cfg works.
-HUGO_RANDOM_GRID_TERRAINS_CFG = terrain_gen.TerrainGeneratorCfg(
-    seed=42,
-    curriculum=True,
-    size=(8.0, 8.0),
-    border_width=20.0,
-    border_height=1.0,
-    num_rows=10,
-    num_cols=20,
-    horizontal_scale=0.1,
-    vertical_scale=0.005,
-    slope_threshold=0.75,
-    color_scheme="none",
-    difficulty_range=(0.0, 1.0),
-    use_cache=True,
-    cache_dir="/tmp/isaaclab/hugo_random_grid_terrains",
-    sub_terrains={
-        "random_grid_rough": terrain_gen.MeshRandomGridTerrainCfg(
-            proportion=1.0,
-            grid_width=0.35,
-            grid_height_range=(0.03, 0.14),
-            platform_width=2.0,
-            holes=False,
-        ),
-    },
-)
-
-
-def make_terrain_cfg():
-    """Create terrain config based on TERRAIN_MODE."""
-
-    terrain_physics_material = sim_utils.RigidBodyMaterialCfg(
-        static_friction=1.0,
-        dynamic_friction=1.0,
-        restitution=0.0,
-    )
-
-    terrain_visual_material = sim_utils.PreviewSurfaceCfg(
-        diffuse_color=(0.75, 0.75, 0.75),
-    )
-
-    if TERRAIN_MODE == "flat":
-        return terrain_gen.TerrainImporterCfg(
-            prim_path="/World/ground",
-            terrain_type="plane",
-            env_spacing=ENV_SPACING,
-            physics_material=terrain_physics_material,
-            visual_material=terrain_visual_material,
-            debug_vis=False,
-        )
-
-    elif TERRAIN_MODE == "usd_mixed":
-        return terrain_gen.TerrainImporterCfg(
-            prim_path="/World/ground",
-            terrain_type="usd",
-            usd_path=TERRAIN_USD_PATH,
-            env_spacing=ENV_SPACING,
-            physics_material=terrain_physics_material,
-            visual_material=terrain_visual_material,
-            debug_vis=False,
-        )
-
-    elif TERRAIN_MODE == "random_grid":
-        return HUGO_RANDOM_GRID_TERRAIN_IMPORTER_CFG
-
-    else:
-        raise ValueError(
-            f"Unknown TERRAIN_MODE: {TERRAIN_MODE}. "
-            "Use 'flat', 'usd_mixed', or 'random_grid'."
-        )
 
 
 ##
@@ -164,12 +74,8 @@ HEIGHT_SCANNER_UPDATE_PERIOD = SIM_DT * DECIMATION
 HEIGHT_SCAN_NOMINAL_HEIGHT = 1.05
 HEIGHT_SCAN_SCALE = 1.0
 
-# TerrainImporter with terrain_type="generator" creates mesh under:
-# /World/ground/terrain
-if TERRAIN_MODE == "random_grid":
-    HEIGHT_SCANNER_MESH_PRIM_PATHS = ["/World/ground/terrain"]
-else:
-    HEIGHT_SCANNER_MESH_PRIM_PATHS = ["/World/ground"]
+# TerrainImporter with terrain_type="generator" usually creates the mesh under /World/ground/terrain.
+HEIGHT_SCANNER_MESH_PRIM_PATHS = ["/World/ground/terrain"]
 
 
 ##
@@ -433,7 +339,7 @@ def joint_deviation_l2(
 class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
     """Scene configuration for Hugo hexapod."""
 
-    terrain = make_terrain_cfg()
+    terrain = HUGO_RANDOM_GRID_TERRAIN_IMPORTER_CFG
 
     robot = ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
@@ -931,78 +837,29 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
         self.scene.imu.update_period = self.sim.dt
         self.scene.height_scanner.update_period = HEIGHT_SCANNER_UPDATE_PERIOD
 
-        if TERRAIN_MODE == "flat":
-            self.commands.base_velocity.ranges.lin_vel_x = (0.25, 0.65)
-            self.commands.base_velocity.ranges.ang_vel_z = (-0.12, 0.12)
+        # Terrain is controlled externally by random_grid_terrain_cfg.py.
+        # These command/reward settings are the default settings used for the current
+        # customizable mixed terrain.
+        self.commands.base_velocity.ranges.lin_vel_x = (0.30, 0.75)
+        self.commands.base_velocity.ranges.ang_vel_z = (-0.10, 0.10)
 
-            self.rewards.track_lin_vel_xy.weight = 3.0
-            self.rewards.track_ang_vel_z.weight = 0.6
+        self.rewards.track_lin_vel_xy.weight = 3.0
+        self.rewards.track_ang_vel_z.weight = 0.5
 
-            self.rewards.feet_air_time.weight = 0.10
-            self.rewards.support_contact_count.weight = 0.0
-            self.rewards.feet_contact_force_l2.weight = -0.015
+        self.rewards.feet_air_time.weight = 0.10
+        self.rewards.support_contact_count.weight = 0.0
+        self.rewards.feet_contact_force_l2.weight = -0.015
 
-            self.rewards.undesired_body_contact.weight = -0.6
+        self.rewards.undesired_body_contact.weight = -0.7
 
-            self.rewards.imu_projected_gravity_xy_l2.weight = -0.8
-            self.rewards.imu_ang_vel_xy_l2.weight = -0.06
-            self.rewards.imu_vertical_dynamic_acc_l2.weight = -0.04
+        self.rewards.imu_projected_gravity_xy_l2.weight = -0.9
+        self.rewards.imu_ang_vel_xy_l2.weight = -0.07
+        self.rewards.imu_vertical_dynamic_acc_l2.weight = -0.04
 
-            self.rewards.action_rate_l2.weight = -0.04
-            self.rewards.action_l2.weight = -0.006
-            self.rewards.joint_deviation_l2.weight = -0.05
-            self.rewards.joint_pos_limits.weight = -0.15
-
-        elif TERRAIN_MODE == "usd_mixed":
-            self.commands.base_velocity.ranges.lin_vel_x = (0.15, 0.40)
-            self.commands.base_velocity.ranges.ang_vel_z = (-0.12, 0.12)
-
-            self.rewards.track_lin_vel_xy.weight = 3.0
-            self.rewards.track_ang_vel_z.weight = 0.6
-
-            self.rewards.feet_air_time.weight = 0.10
-            self.rewards.support_contact_count.weight = 0.0
-            self.rewards.feet_contact_force_l2.weight = -0.015
-
-            self.rewards.undesired_body_contact.weight = -0.6
-
-            self.rewards.imu_projected_gravity_xy_l2.weight = -0.8
-            self.rewards.imu_ang_vel_xy_l2.weight = -0.06
-            self.rewards.imu_vertical_dynamic_acc_l2.weight = -0.04
-
-            self.rewards.action_rate_l2.weight = -0.04
-            self.rewards.action_l2.weight = -0.006
-            self.rewards.joint_deviation_l2.weight = -0.05
-            self.rewards.joint_pos_limits.weight = -0.15
-
-        elif TERRAIN_MODE == "random_grid":
-            # Start easier than full mixed terrain.
-            self.commands.base_velocity.ranges.lin_vel_x = (0.30, 0.75)
-            self.commands.base_velocity.ranges.ang_vel_z = (-0.10, 0.10)
-
-            self.rewards.track_lin_vel_xy.weight = 3.0
-            self.rewards.track_ang_vel_z.weight = 0.5
-
-            self.rewards.feet_air_time.weight = 0.10
-            self.rewards.support_contact_count.weight = 0.0
-            self.rewards.feet_contact_force_l2.weight = -0.015
-
-            self.rewards.undesired_body_contact.weight = -0.7
-
-            self.rewards.imu_projected_gravity_xy_l2.weight = -0.9
-            self.rewards.imu_ang_vel_xy_l2.weight = -0.07
-            self.rewards.imu_vertical_dynamic_acc_l2.weight = -0.04
-
-            self.rewards.action_rate_l2.weight = -0.04
-            self.rewards.action_l2.weight = -0.006
-            self.rewards.joint_deviation_l2.weight = -0.05
-            self.rewards.joint_pos_limits.weight = -0.15
-
-        else:
-            raise ValueError(
-                f"Unknown TERRAIN_MODE: {TERRAIN_MODE}. "
-                "Use 'flat', 'usd_mixed', or 'random_grid'."
-            )
+        self.rewards.action_rate_l2.weight = -0.04
+        self.rewards.action_l2.weight = -0.006
+        self.rewards.joint_deviation_l2.weight = -0.05
+        self.rewards.joint_pos_limits.weight = -0.15
 
         self.viewer.eye = (5.0, 5.0, 4.0)
         self.viewer.lookat = (0.0, 0.0, 0.5)
