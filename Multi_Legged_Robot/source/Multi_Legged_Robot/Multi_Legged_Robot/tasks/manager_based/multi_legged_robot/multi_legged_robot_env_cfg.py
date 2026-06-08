@@ -42,6 +42,7 @@ from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg, ImuCfg, RayCasterCfg, patterns
 from isaaclab.utils import configclass
+from .random_grid_terrain_cfg import HUGO_RANDOM_GRID_TERRAIN_IMPORTER_CFG
 
 
 ##
@@ -136,18 +137,8 @@ def make_terrain_cfg():
         )
 
     elif TERRAIN_MODE == "random_grid":
-        return terrain_gen.TerrainImporterCfg(
-            prim_path="/World/ground",
-            terrain_type="generator",
-            terrain_generator=HUGO_RANDOM_GRID_TERRAINS_CFG,
-            use_terrain_origins=True,
-            max_init_terrain_level=2,
-            env_spacing=ENV_SPACING,
-            physics_material=terrain_physics_material,
-            visual_material=terrain_visual_material,
-            debug_vis=False,
-        )
-
+        return HUGO_RANDOM_GRID_TERRAIN_IMPORTER_CFG
+    
     else:
         raise ValueError(
             f"Unknown TERRAIN_MODE: {TERRAIN_MODE}. "
