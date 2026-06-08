@@ -226,7 +226,7 @@ class ActionsCfg:
     prismatic_pos = mdp.JointPositionActionCfg(
         asset_name="robot",
         joint_names=[".*prismatic.*"],
-        scale=0.01,
+        scale=0.04,
         use_default_offset=True,
     )
 
