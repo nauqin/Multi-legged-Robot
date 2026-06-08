@@ -33,8 +33,8 @@ import isaaclab.terrains as terrain_gen
 #
 # Recommended first setting:
 #   flat 20%, random grid 30%, slope 30%, stairs 20%
-FLAT_RATIO = 100.0
-RANDOM_GRID_RATIO = 0.0
+FLAT_RATIO = 70.0
+RANDOM_GRID_RATIO = 30.0
 SLOPE_RATIO = 0.0
 STAIRS_RATIO = 0.0
 
@@ -62,11 +62,9 @@ STAIRS_PROPORTION = _normalize_ratio(STAIRS_RATIO, _TOTAL_RATIO)
 ##
 
 # Each sub-terrain patch is 8 m x 8 m, same as the IsaacLab rough terrain preset.
-SUB_TERRAIN_SIZE = (8.0, 8.0)
 
 # num_rows controls difficulty levels.
 # With curriculum=True, row 0 is easy and later rows become harder.
-NUM_ROWS = 64
 
 # num_cols controls terrain-type distribution.
 # Since 20 columns and 20/30/30/20 ratio:
@@ -74,7 +72,6 @@ NUM_ROWS = 64
 #   random_grid -> about 6 columns
 #   slope       -> about 6 columns
 #   stairs      -> about 4 columns
-NUM_COLS = 64
 
 # Difficulty range used for curriculum.
 # Smaller upper bound makes all terrains easier.
@@ -84,8 +81,22 @@ DIFFICULTY_RANGE = (0.0, 1.0)
 # If you change terrain parameters and want a fresh terrain, either:
 #   1. change CACHE_DIR, or
 #   2. delete the old cache directory.
-USE_CACHE = True
-CACHE_DIR = "/tmp/isaaclab/hugo_mixed_rough_terrains"
+
+TERRAIN_PROFILE = "play"
+
+if TERRAIN_PROFILE == "train":
+    NUM_ROWS = 8
+    NUM_COLS = 16
+    SUB_TERRAIN_SIZE = (8.0, 8.0)
+    USE_CACHE = True
+    CACHE_DIR = "/tmp/isaaclab/hugo_mixed_rough_terrains_train"
+
+elif TERRAIN_PROFILE == "play":
+    NUM_ROWS = 4
+    NUM_COLS = 4
+    SUB_TERRAIN_SIZE = (8.0, 8.0)
+    USE_CACHE = False
+    CACHE_DIR = "/tmp/isaaclab/hugo_mixed_rough_terrains_play"
 
 
 ##
