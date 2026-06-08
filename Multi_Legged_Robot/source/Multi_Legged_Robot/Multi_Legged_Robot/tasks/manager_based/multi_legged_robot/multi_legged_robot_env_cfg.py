@@ -283,12 +283,12 @@ class ObservationsCfg:
             },
         )
 
-        imu_lin_acc_residual_b = ObsTerm(
-            func=hugo_mdp.imu_lin_acc_residual_b,
-            params={
-            "sensor_cfg": SceneEntityCfg("imu"),
-            },
-        )
+        # imu_lin_acc_residual_b = ObsTerm(
+        #     func=hugo_mdp.imu_lin_acc_residual_b,
+        #     params={
+        #     "sensor_cfg": SceneEntityCfg("imu"),
+        #     },
+        # )
 
         # command
         velocity_commands = ObsTerm(
