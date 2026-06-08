@@ -34,14 +34,14 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
+import isaaclab_tasks.manager_based.locomotion.velocity.mdp as locomotion_mdp
+from isaaclab.terrains import TerrainImporterCfg
+import Multi_Legged_Robot.tasks.manager_based.multi_legged_robot.mdp as hugo_mdp
 
 # IsaacLab official MDP terms
 import isaaclab.envs.mdp as mdp
-import isaaclab_tasks.manager_based.locomotion.velocity.mdp as locomotion_mdp
-import Multi_Legged_Robot.tasks.manager_based.multi_legged_robot.mdp as hugo_mdp
-from isaaclab.sensors import ContactSensorCfg, ImuCfg
+from isaaclab.sensors import ContactSensorCfg
 
-from isaaclab.terrains import TerrainImporterCfg
 
 ##
 # Paths and design-level constants
@@ -63,9 +63,6 @@ INITIAL_BODY_HEIGHT = 1.55
 # 50 Hz action period: sim.dt=1/200, decimation=4
 SIM_DT = 1.0 / 200.0
 DECIMATION = 4
-
-#imu용 중력
-GRAVITY_MAG = 9.81
 
 
 ##
@@ -141,23 +138,10 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
 
 
     )
-    
     contact_forces = ContactSensorCfg(
         prim_path="{ENV_REGEX_NS}/Robot/.*", 
         history_length=3,
         track_air_time=True,
-    )
-
-    imu = ImuCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/base_link",
-        update_period=0.0,
-        history_length=3,
-        debug_vis=False,
-        offset=ImuCfg.OffsetCfg(
-            pos=(0.0, 0.0, 0.0),
-            rot=(1.0, 0.0, 0.0, 0.0),
-        ),
-        gravity_bias=(0.0, 0.0, GRAVITY_MAG),
     )
 
     dome_light = AssetBaseCfg(
@@ -264,31 +248,9 @@ class ObservationsCfg:
         """
 
         # base state
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel) #몸통이 얼마나 빨리 이동 중인가
-        # base_ang_vel = ObsTerm(func=mdp.base_ang_vel) #몸통이 얼마나 빨리 회전 중인가 [wx, wy, wz]
-        # projected_gravity = ObsTerm(func=mdp.projected_gravity) #중력이 몸 좌표계에서 어느 방향으로 보이는가 ex) 몸이 바로 서 있을 때 [0, 0, -1]
-        
-        #imu
-        imu_ang_vel_b = ObsTerm(
-            func=hugo_mdp.imu_ang_vel_b,
-            params={
-                "sensor_cfg": SceneEntityCfg("imu"),
-            },
-        )
-
-        imu_projected_gravity_b = ObsTerm(
-            func=hugo_mdp.imu_projected_gravity_b,
-            params={
-            "sensor_cfg": SceneEntityCfg("imu"),
-            },
-        )
-
-        imu_lin_acc_residual_b = ObsTerm(
-            func=hugo_mdp.imu_lin_acc_residual_b,
-            params={
-            "sensor_cfg": SceneEntityCfg("imu"),
-            },
-        )
+        base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
+        base_ang_vel = ObsTerm(func=mdp.base_ang_vel)
+        projected_gravity = ObsTerm(func=mdp.projected_gravity)
 
         # command
         velocity_commands = ObsTerm(
@@ -306,21 +268,12 @@ class ObservationsCfg:
             params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*joint.*"])},
         )
 
-        feet_contact = ObsTerm(
-            func=hugo_mdp.feet_contact_state,
-            params={
-                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_feet"),
-                "threshold": 1.0,},
-        )
-
-        feet_contact_force = ObsTerm(
-        func=hugo_mdp.feet_contact_force,
-        params={
-            "sensor_cfg": SceneEntityCfg(
-                "contact_forces",
-                body_names=".*_feet",
-            ),},
-        )
+        # feet_contact = ObsTerm(
+        #     func=hugo_mdp.feet_contact_state,
+        #     params={
+        #         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_feet"),
+        #         "threshold": 1.0,},
+        # )
 
         # previous action: now contains revolute action only
         actions = ObsTerm(func=mdp.last_action)
@@ -484,7 +437,7 @@ class RewardsCfg:
         func=locomotion_mdp.feet_air_time, 
         weight=0.5,#수정 후보 0.5-> 1.0
         params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_feet"),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*feet.*"),
             "command_name": "base_velocity",
             "threshold": 1.0,
         },
