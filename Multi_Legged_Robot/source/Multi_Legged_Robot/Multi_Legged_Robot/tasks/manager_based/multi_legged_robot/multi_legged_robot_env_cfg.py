@@ -47,6 +47,10 @@ from isaaclab.sensors import (
 )
 
 from isaaclab.terrains import TerrainImporterCfg
+from .random_grid_terrain_cfg import (
+    HUGO_MIXED_ROUGH_TERRAIN_IMPORTER_CFG
+)
+
 
 ##
 # Paths and design-level constants
@@ -83,10 +87,7 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
 
     # Current mixed terrain USD.
     # If a pure flat terrain USD exists, use it here for first-stage walking training.
-    terrain = TerrainImporterCfg(
-        prim_path="/World/ground",
-        terrain_type="plane",
-    )
+    terrain = HUGO_MIXED_ROUGH_TERRAIN_IMPORTER_CFG
 
     robot = ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
@@ -170,7 +171,7 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
         update_period=SIM_DT * DECIMATION,
         history_length=1,
         debug_vis=True,
-        mesh_prim_paths=["/World/ground"],
+        mesh_prim_paths=["/World/ground/terrain"],
         ray_alignment="yaw",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.15, size=(1.8, 1.2),),
         max_distance=5.0,
