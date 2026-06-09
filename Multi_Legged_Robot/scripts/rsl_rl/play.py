@@ -14,6 +14,7 @@ from isaaclab.app import AppLauncher
 
 # local imports
 import cli_args  # isort: skip
+from pathlib import Path
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
@@ -103,7 +104,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # override configurations with non-hydra CLI arguments
     agent_cfg: RslRlBaseRunnerCfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
-    env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
+    env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else 4
 
     # handle deprecated configurations
     agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, installed_version)
@@ -125,7 +126,28 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     elif args_cli.checkpoint:
         resume_path = retrieve_file_path(args_cli.checkpoint)
     else:
-        resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+        runs = sorted(
+            [p for p in Path(log_root_path).iterdir() if p.is_dir()],
+            key=lambda p: p.stat().st_mtime,
+        )
+        if len(runs) == 0:
+            raise FileNotFoundError(
+                f"No runs found in {log_root_path}")
+
+        latest_run = runs[-1]
+
+        models = sorted(
+            latest_run.glob("model_*.pt"),
+            key=lambda p: p.stat().st_mtime,)
+        
+        if len(models) == 0:
+            raise FileNotFoundError(
+                f"No model_*.pt found in {latest_run}")
+
+        resume_path = str(models[-1])
+
+        print(f"[INFO] Auto selected latest checkpoint:")
+        print(f"       {resume_path}")
 
     log_dir = os.path.dirname(resume_path)
 

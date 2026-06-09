@@ -39,7 +39,12 @@ from isaaclab.utils import configclass
 import isaaclab.envs.mdp as mdp
 import isaaclab_tasks.manager_based.locomotion.velocity.mdp as locomotion_mdp
 import Multi_Legged_Robot.tasks.manager_based.multi_legged_robot.mdp as hugo_mdp
-from isaaclab.sensors import ContactSensorCfg, ImuCfg
+from isaaclab.sensors import (
+    ContactSensorCfg,
+    ImuCfg,
+    RayCasterCfg,
+    patterns,
+)
 
 from isaaclab.terrains import TerrainImporterCfg
 
@@ -160,6 +165,20 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
         gravity_bias=(0.0, 0.0, GRAVITY_MAG),
     )
 
+    height_scanner = RayCasterCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/base_link",
+        update_period=SIM_DT * DECIMATION,
+        history_length=1,
+        debug_vis=True,
+        mesh_prim_paths=["/World/ground"],
+        ray_alignment="yaw",
+        pattern_cfg=patterns.GridPatternCfg(resolution=0.15, size=(1.8, 1.2),),
+        max_distance=5.0,
+        offset=RayCasterCfg.OffsetCfg(
+            pos=(0.20, 0.0, 0.30),
+            rot=(1.0, 0.0, 0.0, 0.0),),
+    )
+
     dome_light = AssetBaseCfg(
         prim_path="/World/DomeLight",
         spawn=sim_utils.DomeLightCfg(
@@ -268,19 +287,37 @@ class ObservationsCfg:
         # base_ang_vel = ObsTerm(func=mdp.base_ang_vel) #몸통이 얼마나 빨리 회전 중인가 [wx, wy, wz]
         # projected_gravity = ObsTerm(func=mdp.projected_gravity) #중력이 몸 좌표계에서 어느 방향으로 보이는가 ex) 몸이 바로 서 있을 때 [0, 0, -1]
         
-        #imu
+        
+        # revolute joint states
+        joint_pos = ObsTerm(
+            func=mdp.joint_pos_rel,
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*joint.*"])},
+        )
+        joint_vel = ObsTerm(
+            func=mdp.joint_vel_rel,
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*joint.*"])},
+        )
+        
+        # prismatic joint states
+        prismatic_joint_pos = ObsTerm(
+            func=mdp.joint_pos_rel,
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*prismatic.*"],)},
+        )
+
+        prismatic_joint_vel = ObsTerm(
+            func=mdp.joint_vel_rel,
+            params={"asset_cfg": SceneEntityCfg("robot",joint_names=[".*prismatic.*"],)},
+        )
+
+        # imu
         imu_ang_vel_b = ObsTerm(
             func=hugo_mdp.imu_ang_vel_b,
-            params={
-                "sensor_cfg": SceneEntityCfg("imu"),
-            },
+            params={"sensor_cfg": SceneEntityCfg("imu"),},
         )
 
         imu_projected_gravity_b = ObsTerm(
             func=hugo_mdp.imu_projected_gravity_b,
-            params={
-            "sensor_cfg": SceneEntityCfg("imu"),
-            },
+            params={"sensor_cfg": SceneEntityCfg("imu"),},
         )
 
         # imu_lin_acc_residual_b = ObsTerm(
@@ -290,21 +327,7 @@ class ObservationsCfg:
         #     },
         # )
 
-        # command
-        velocity_commands = ObsTerm(
-            func=mdp.generated_commands,
-            params={"command_name": "base_velocity"},
-        )
-
-        # revolute joint states only
-        joint_pos = ObsTerm(
-            func=mdp.joint_pos_rel,
-            params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*joint.*"])},
-        )
-        joint_vel = ObsTerm(
-            func=mdp.joint_vel_rel,
-            params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*joint.*"])},
-        )
+        # feet states
 
         feet_contact = ObsTerm(
             func=hugo_mdp.feet_contact_state,
@@ -314,30 +337,20 @@ class ObservationsCfg:
         )
 
         feet_contact_force = ObsTerm(
-        func=hugo_mdp.feet_contact_force,
-        params={
-            "sensor_cfg": SceneEntityCfg(
-                "contact_forces",
-                body_names=".*_feet",
-            ),},
+            func=hugo_mdp.feet_contact_force,
+            params={"sensor_cfg": SceneEntityCfg("contact_forces",body_names=".*_feet",),},
         )
 
-        prismatic_joint_pos = ObsTerm(
-        func=mdp.joint_pos_rel,
-        params={
-            "asset_cfg": SceneEntityCfg(
-                "robot",
-                joint_names=[".*prismatic.*"],)
-            },
+        # scan
+        height_scan = ObsTerm(
+            func=mdp.height_scan,
+            params={"sensor_cfg": SceneEntityCfg("height_scanner"),},
         )
 
-        prismatic_joint_vel = ObsTerm(
-        func=mdp.joint_vel_rel,
-        params={
-            "asset_cfg": SceneEntityCfg(
-                "robot",
-                joint_names=[".*prismatic.*"],)
-            },
+        # command
+        velocity_commands = ObsTerm(
+            func=mdp.generated_commands,
+            params={"command_name": "base_velocity"},
         )
 
         # previous action: now contains revolute action only
@@ -629,6 +642,7 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
         # simulation
         self.sim.dt = SIM_DT
         self.sim.render_interval = self.decimation
+        self.scene.height_scanner.update_period = (SIM_DT * DECIMATION)
 
         # viewer
         self.viewer.eye = (5.0, 5.0, 4.0)
