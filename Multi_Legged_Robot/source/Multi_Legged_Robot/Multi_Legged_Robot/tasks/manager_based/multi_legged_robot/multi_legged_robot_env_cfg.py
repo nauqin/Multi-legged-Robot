@@ -69,8 +69,8 @@ ENV_SPACING = 4.0
 # Height scanner constants
 ##
 
-HEIGHT_SCANNER_OFFSET_POS = (0.35, 0.0, 0.50)
-HEIGHT_SCANNER_SIZE = (1.8, 1.2)
+HEIGHT_SCANNER_OFFSET_POS = (0.20, 0.0, 0.50)
+HEIGHT_SCANNER_SIZE = (2.4, 1.6)
 HEIGHT_SCANNER_RESOLUTION = 0.15
 HEIGHT_SCANNER_MAX_DISTANCE = 5.0
 HEIGHT_SCANNER_UPDATE_PERIOD = SIM_DT * DECIMATION
@@ -105,6 +105,107 @@ NON_FOOT_BODY_NAMES = [
 ##
 # Contact reward / observation functions
 ##
+
+def _nearest_terrain_height_from_scan(
+    sensor,
+    query_pos_w: torch.Tensor,
+):
+    """Find nearest height-scanner ray hit height for each query point.
+
+    Args:
+        sensor: RayCaster sensor.
+        query_pos_w: Tensor with shape (num_envs, num_points, 3).
+
+    Returns:
+        terrain_z: Tensor with shape (num_envs, num_points).
+        nearest_dist_xy: Tensor with shape (num_envs, num_points).
+    """
+    ray_hits_w = sensor.data.ray_hits_w
+
+    ray_xy = ray_hits_w[..., :2]
+    ray_z = ray_hits_w[..., 2]
+
+    query_xy = query_pos_w[..., :2]
+
+    valid = torch.isfinite(ray_z)
+
+    # Distance from each query point to each ray hit point in XY plane.
+    # shape: (num_envs, num_points, num_rays)
+    dist_xy_sq = torch.sum(
+        (query_xy.unsqueeze(2) - ray_xy.unsqueeze(1)) ** 2,
+        dim=-1,
+    )
+
+    inf = torch.full_like(dist_xy_sq, float("inf"))
+    dist_xy_sq = torch.where(valid.unsqueeze(1), dist_xy_sq, inf)
+
+    nearest_ids = torch.argmin(dist_xy_sq, dim=-1)
+
+    terrain_z = torch.gather(ray_z, dim=1, index=nearest_ids)
+    nearest_dist_xy = torch.sqrt(
+        torch.gather(dist_xy_sq, dim=2, index=nearest_ids.unsqueeze(-1)).squeeze(-1)
+    )
+
+    terrain_z = torch.nan_to_num(terrain_z, nan=0.0, posinf=0.0, neginf=0.0)
+    nearest_dist_xy = torch.nan_to_num(nearest_dist_xy, nan=1.0, posinf=1.0, neginf=1.0)
+
+    return terrain_z, nearest_dist_xy
+
+
+def terrain_swing_clearance_l2(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg,
+    contact_sensor_cfg: SceneEntityCfg,
+    desired_clearance: float = 0.12,
+    contact_threshold: float = 1.0,
+):
+    """Penalty when swing feet do not clear the terrain enough.
+
+    This connects foot position with terrain height from the height scanner.
+
+    Good behavior:
+        - If a foot is in swing phase, it should stay above nearby terrain.
+        - If terrain is higher, the foot should be lifted higher.
+
+    Returns:
+        penalty. Smaller is better.
+    """
+    height_sensor = env.scene[sensor_cfg.name]
+    robot = env.scene[asset_cfg.name]
+    contact_sensor = env.scene[contact_sensor_cfg.name]
+
+    foot_pos_w = robot.data.body_pos_w[:, asset_cfg.body_ids, :]
+
+    terrain_z, nearest_dist_xy = _nearest_terrain_height_from_scan(
+        height_sensor,
+        foot_pos_w,
+    )
+
+    foot_z = foot_pos_w[..., 2]
+    clearance = foot_z - terrain_z
+
+    forces = (
+        contact_sensor.data.net_forces_w_history[:, :, contact_sensor_cfg.body_ids, :]
+        .norm(dim=-1)
+        .max(dim=1)[0]
+    )
+    contacts = forces > contact_threshold
+    swing_mask = ~contacts
+
+    # If the foot is in swing phase and clearance is lower than desired_clearance,
+    # give penalty.
+    clearance_deficit = torch.clamp(desired_clearance - clearance, min=0.0)
+
+    # If nearest ray is too far, do not trust this reward strongly.
+    # This prevents bad gradients when foot is outside scanner coverage.
+    valid_near = nearest_dist_xy < 0.25
+
+    penalty = (clearance_deficit / desired_clearance) ** 2
+    penalty = penalty * swing_mask.float() * valid_near.float()
+
+    denom = torch.sum(swing_mask.float() * valid_near.float(), dim=1).clamp(min=1.0)
+    return torch.sum(penalty, dim=1) / denom
 
 def feet_support_count(
     env,
@@ -793,6 +894,18 @@ class RewardsCfg:
         weight=-0.15,
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=[".*joint.*"]),
+        },
+    )
+
+    terrain_swing_clearance = RewTerm(
+        func=terrain_swing_clearance_l2,
+        weight=-0.06,
+        params={
+            "sensor_cfg": SceneEntityCfg("height_scanner"),
+            "asset_cfg": SceneEntityCfg("robot", body_names=FOOT_BODY_NAMES),
+            "contact_sensor_cfg": SceneEntityCfg("contact_forces", body_names=FOOT_BODY_NAMES),
+            "desired_clearance": 0.12,
+            "contact_threshold": 1.0,
         },
     )
 
