@@ -264,3 +264,10 @@ HUGO_MIXED_ROUGH_TERRAIN_IMPORTER_CFG = terrain_gen.TerrainImporterCfg(
 # it will still work with this mixed terrain.
 HUGO_RANDOM_GRID_TERRAINS_CFG = HUGO_MIXED_ROUGH_TERRAINS_CFG
 HUGO_RANDOM_GRID_TERRAIN_IMPORTER_CFG = HUGO_MIXED_ROUGH_TERRAIN_IMPORTER_CFG
+
+# 강제로 play로 실행
+# HUGO_TERRAIN_PROFILE=play python scripts/rsl_rl/play.py --task Hugo-Hexapod-v0 --num_envs 4 --checkpoint <checkpoint_path>
+
+# 캐시 삭제
+# rm -rf /tmp/isaaclab/hugo_mixed_rough_terrains_train
+# rm -rf /tmp/isaaclab/hugo_mixed_rough_terrains_play
