@@ -67,7 +67,7 @@ ROBOT_USD_PATH = "/home/ubin/Hugo_Project/usd files/hugo_hexapod_ver2/hugo_hexap
 # 사용자가 확인한 것처럼 로봇이 terrain에 끼어 튕겨나가는 경우가 있어
 # 초기 spawn 높이는 당분간 높게 유지한다.
 # 단, 너무 높으면 낙하 충격이 커질 수 있으므로 안정화되면 1.20, 1.10 등으로 낮춰 실험 권장.
-INITIAL_BODY_HEIGHT = 1.55
+INITIAL_BODY_HEIGHT = 1.8
 
 # 50 Hz action period: sim.dt=1/200, decimation=4
 SIM_DT = 1.0 / 200.0
@@ -170,7 +170,7 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
         prim_path="{ENV_REGEX_NS}/Robot/base_link",
         update_period=SIM_DT * DECIMATION,
         history_length=1,
-        debug_vis=True,
+        debug_vis=False,
         mesh_prim_paths=["/World/ground/terrain"],
         ray_alignment="yaw",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.15, size=(1.8, 1.2),),
