@@ -33,10 +33,10 @@ import isaaclab.terrains as terrain_gen
 #
 # Recommended first setting:
 #   flat 20%, random grid 30%, slope 30%, stairs 20%
-FLAT_RATIO = 40.0
-RANDOM_GRID_RATIO = 60.0
-SLOPE_RATIO = 0.0
-STAIRS_RATIO = 0.0
+FLAT_RATIO = 20.0
+RANDOM_GRID_RATIO = 20.0
+SLOPE_RATIO = 25.0
+STAIRS_RATIO = 35.0
 
 
 def _normalize_ratio(value: float, total: float) -> float:
@@ -92,8 +92,8 @@ if TERRAIN_PROFILE == "train":
     CACHE_DIR = "/tmp/isaaclab/hugo_mixed_rough_terrains_train"
 
 elif TERRAIN_PROFILE == "play":
-    NUM_ROWS = 4
-    NUM_COLS = 4
+    NUM_ROWS = 8
+    NUM_COLS = 16
     SUB_TERRAIN_SIZE = (8.0, 8.0)
     USE_CACHE = False
     CACHE_DIR = "/tmp/isaaclab/hugo_mixed_rough_terrains_play"
@@ -138,7 +138,7 @@ RANDOM_GRID_SETTINGS = dict(
 # With curriculum=True, the effective slope gradually increases by row.
 SLOPE_SETTINGS = dict(
     proportion=SLOPE_PROPORTION,
-    slope_range=(0.0, 0.4),
+    slope_range=(0.2, 0.5),
     platform_width=2.0,
     border_width=0.25,
 )
