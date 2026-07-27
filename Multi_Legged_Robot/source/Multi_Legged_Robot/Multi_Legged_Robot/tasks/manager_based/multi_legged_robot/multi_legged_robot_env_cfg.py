@@ -3,19 +3,20 @@
 
 """Configuration for Hugo hexapod manager-based RL environment.
 
-Temporary revolute-only training configuration.
+FLAT-TERRAIN training configuration (fluctuation measurement baseline).
 
 Purpose of this version:
-- train basic flat/mild-terrain walking using revolute joints first
-- keep prismatic joints at their default 0 position as much as possible
-- remove direct anti-fluctuation rewards/observations for now
-- keep simple posture/vertical velocity stabilization terms
-- avoid contact sensors for now
+- train flat walking with the full sensor/observation set (231-dim obs, 30-dim action)
+- observation/action dimensions match the rough-terrain runs, so checkpoints
+  from either side can be loaded across configs
+- anti-fluctuation direct rewards (base_height_l2 etc.) are NOT included here;
+  add them later and resume from a converged walking checkpoint
+  (adding them to fresh training collapses into a standing-only policy —
+  verified experimentally)
 
-Important:
-- This cfg removes prismatic joints from the policy action space.
-- For true prismatic locking, also modify the URDF prismatic joint limits to
-  lower="0.0", upper="0.0" or lower="0.0", upper="0.001".
+Notes:
+- prismatic_pos action IS active (despite older comments saying otherwise).
+- Curriculum is intentionally absent: plane terrain has no difficulty levels.
 """
 
 from __future__ import annotations
@@ -47,33 +48,29 @@ from isaaclab.sensors import (
 )
 
 from isaaclab.terrains import TerrainImporterCfg
-from .random_grid_terrain_cfg import (
-    HUGO_MIXED_ROUGH_TERRAIN_IMPORTER_CFG
-)
 
 
 ##
 # Paths and design-level constants
 ##
 
-TERRAIN_USD_PATH = "/home/ubin/Hugo_Project/usd files/terrain.usd"
 ROBOT_USD_PATH = "/home/ubin/Hugo_Project/usd files/hugo_hexapod_ver2/hugo_hexapod_ver2.usd"
 
-# Prismatic을 잠깐 사용하지 않는 revolute-only 단계에서는
-# TARGET_BODY_HEIGHT 기반 anti-fluctuation 직접 보상은 제거한다.
-# 나중에 prismatic/height control을 다시 사용할 때 아래 값을 복구하면 됨.
-# TARGET_BODY_HEIGHT = 1.02
+# anti-fluctuation 단계에서 base_height_l2 보상을 추가할 때 사용.
+# 지금은 정의만 해두고 보상에는 연결하지 않는다 (fresh 학습에 걸면 서 있기
+# 국소해로 붕괴하는 것을 실험으로 확인함).
+# 주의: 연결 전에 play로 잘 걷는 정책의 실제 몸통 높이를 재서 이 값이 맞는지
+#       확인할 것. 자연 보행 높이와 어긋난 목표는 걸음을 뒤틀리게 한다.
+TARGET_BODY_HEIGHT = 1.02
 
-# 사용자가 확인한 것처럼 로봇이 terrain에 끼어 튕겨나가는 경우가 있어
-# 초기 spawn 높이는 당분간 높게 유지한다.
-# 단, 너무 높으면 낙하 충격이 커질 수 있으므로 안정화되면 1.20, 1.10 등으로 낮춰 실험 권장.
+# 검증된 평지 spawn 높이.
 INITIAL_BODY_HEIGHT = 1.8
 
 # 50 Hz action period: sim.dt=1/200, decimation=4
 SIM_DT = 1.0 / 200.0
 DECIMATION = 4
 
-#imu용 중력
+# imu용 중력
 GRAVITY_MAG = 9.81
 
 
@@ -83,18 +80,28 @@ GRAVITY_MAG = 9.81
 
 @configclass
 class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
-    """Scene configuration for Hugo hexapod."""
+    """Scene configuration for Hugo hexapod (flat terrain)."""
 
-    # Current mixed terrain USD.
-    # If a pure flat terrain USD exists, use it here for first-stage walking training.
-    terrain = HUGO_MIXED_ROUGH_TERRAIN_IMPORTER_CFG
+    # 검증된 평지 설정: 원래 flat 학습(2033 iter, reward 59.76 수렴)과 동일.
+    # physics_material을 명시해 마찰 결합 방식이 기본값으로 바뀌지 않게 한다
+    # (로봇 쪽 마찰 랜덤화 0.6~1.2와의 결합이 검증된 run과 같아야 함).
+    terrain = TerrainImporterCfg(
+        prim_path="/World/ground",
+        terrain_type="plane",
+        collision_group=-1,
+        physics_material=sim_utils.RigidBodyMaterialCfg(
+            friction_combine_mode="multiply",
+            restitution_combine_mode="multiply",
+            static_friction=1.0,
+            dynamic_friction=1.0,
+        ),
+    )
 
     robot = ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
         spawn=sim_utils.UsdFileCfg(
             usd_path=ROBOT_USD_PATH,
 
-            # Contact sensors are intentionally disabled -> enable
             activate_contact_sensors=True,
 
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
@@ -102,6 +109,8 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
             ),
 
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+                # 이 로봇은 더미/구형 링크가 설계상 겹쳐 있어 self-collision을
+                # 켜면 스폰 직후 뒤집힌다 (실험으로 확인). 반드시 False 유지.
                 enabled_self_collisions=False,
                 solver_position_iteration_count=8,
                 solver_velocity_iteration_count=2,
@@ -114,9 +123,6 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
                 ".*joint1_roll": 0.0,
                 ".*joint2_pitch": 0.0,
                 ".*joint3_pitch": 0.0,
-
-                # Prismatic joints are initialized at zero.
-                # For true locking, also lock them in the URDF joint limits.
                 ".*prismatic1": 0.0,
                 ".*prismatic2": 0.0,
             },
@@ -124,9 +130,6 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
         ),
 
         actuators={
-            # Keep prismatic actuator enabled to hold default position as much as possible.
-            # However, prismatic joints are removed from the policy action space below.
-            # Best practice: lock prismatic limits in URDF to 0.0~0.001 as well.
             "prismatic": ImplicitActuatorCfg(
                 joint_names_expr=[".*prismatic.*"],
                 stiffness=3000.0,
@@ -135,7 +138,6 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
                 velocity_limit_sim=1.0,
             ),
 
-            # Revolute joints are the only joints controlled by the policy in this cfg.
             "revolute": ImplicitActuatorCfg(
                 joint_names_expr=[".*joint.*"],
                 stiffness=2000.0,
@@ -144,12 +146,12 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
                 velocity_limit_sim=2.0,
             ),
         },
-
-
     )
-    
+
+    # 평지(해석적 평면)에서는 전 링크 접촉 센서가 문제를 일으키지 않는다.
+    # (러프 삼각형 메시로 갈 때만 범위 축소 필요)
     contact_forces = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/.*", 
+        prim_path="{ENV_REGEX_NS}/Robot/.*",
         history_length=3,
         track_air_time=True,
     )
@@ -166,6 +168,9 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
         gravity_bias=(0.0, 0.0, GRAVITY_MAG),
     )
 
+    # 평지용 스캐너: 낮은 오프셋(0.30)과 5 m max_distance면 충분.
+    # (20 m 오프셋은 계단/경사에서 시작점이 지형에 묻히는 것을 막기 위한
+    #  러프 전용 설정이었음)
     height_scanner = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base_link",
         update_period=SIM_DT * DECIMATION,
@@ -173,11 +178,12 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
         debug_vis=False,
         mesh_prim_paths=["/World/ground/terrain"],
         ray_alignment="yaw",
-        pattern_cfg=patterns.GridPatternCfg(resolution=0.15, size=(1.8, 1.2),),
+        pattern_cfg=patterns.GridPatternCfg(resolution=0.15, size=(1.8, 1.2)),
         max_distance=5.0,
         offset=RayCasterCfg.OffsetCfg(
             pos=(0.20, 0.0, 0.30),
-            rot=(1.0, 0.0, 0.0, 0.0),),
+            rot=(1.0, 0.0, 0.0, 0.0),
+        ),
     )
 
     dome_light = AssetBaseCfg(
@@ -195,10 +201,8 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
 
 @configclass
 class CommandsCfg:
-    """Command specifications for revolute-only walking."""
+    """Command specifications."""
 
-    # Standing command is disabled to avoid learning a standing-only policy.
-    # Forward-only command is used to force basic walking attempts.
     base_velocity = mdp.UniformVelocityCommandCfg(
         asset_name="robot",
         resampling_time_range=(8.0, 8.0),
@@ -220,13 +224,9 @@ class CommandsCfg:
 
 @configclass
 class ActionsCfg:
-    """Action specifications for revolute-only training.
+    """Action specifications (30-dim: roll 6 + pitch 12 + prismatic 12)."""
 
-    Prismatic action is temporarily disabled.
-    Only roll/pitch revolute joints are controlled by the policy.
-    """
-
-    # Roll 관절 (안정적인 자세 유지용: 0.05)
+    # Roll 관절 (자세 유지)
     roll_pos = mdp.JointPositionActionCfg(
         asset_name="robot",
         joint_names=[".*roll"],
@@ -234,7 +234,7 @@ class ActionsCfg:
         use_default_offset=True,
     )
 
-    # Pitch 관절 (보행 동작 수행용: 0.2)
+    # Pitch 관절 (보행)
     pitch_pos = mdp.JointPositionActionCfg(
         asset_name="robot",
         joint_names=[".*pitch"],
@@ -242,21 +242,13 @@ class ActionsCfg:
         use_default_offset=True,
     )
 
-    # Disabled for first-stage revolute-only walking.
+    # 활성 상태. anti-fluctuation 단계에서 높이 제어를 담당할 관절이므로 유지.
     prismatic_pos = mdp.JointPositionActionCfg(
         asset_name="robot",
         joint_names=[".*prismatic.*"],
         scale=0.04,
         use_default_offset=True,
     )
-
-    # revolute_pos = mdp.JointPositionActionCfg(
-    #     asset_name="robot",
-    #     joint_names=[".*joint.*"],
-    #     scale=0.3,
-    #     use_default_offset=True,
-    # )
-
 
 
 ##
@@ -269,26 +261,11 @@ class ObservationsCfg:
 
     @configclass
     class PolicyCfg(ObsGroup):
-        """Policy observations for revolute-only walking.
-
-        Removed for now:
-        - base_height observation
-        - body_height_error observation
-
-        Kept:
-        - base velocity
-        - projected gravity
-        - command
-        - revolute joint states
-        - previous action
-        """
+        """Policy observations (231-dim, rough-terrain 구성과 동일)."""
 
         # base state
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel) #몸통이 얼마나 빨리 이동 중인가
-        # base_ang_vel = ObsTerm(func=mdp.base_ang_vel) #몸통이 얼마나 빨리 회전 중인가 [wx, wy, wz]
-        # projected_gravity = ObsTerm(func=mdp.projected_gravity) #중력이 몸 좌표계에서 어느 방향으로 보이는가 ex) 몸이 바로 서 있을 때 [0, 0, -1]
-        
-        
+        base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
+
         # revolute joint states
         joint_pos = ObsTerm(
             func=mdp.joint_pos_rel,
@@ -298,54 +275,44 @@ class ObservationsCfg:
             func=mdp.joint_vel_rel,
             params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*joint.*"])},
         )
-        
+
         # prismatic joint states
         prismatic_joint_pos = ObsTerm(
             func=mdp.joint_pos_rel,
-            params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*prismatic.*"],)},
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*prismatic.*"])},
         )
-
         prismatic_joint_vel = ObsTerm(
             func=mdp.joint_vel_rel,
-            params={"asset_cfg": SceneEntityCfg("robot",joint_names=[".*prismatic.*"],)},
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*prismatic.*"])},
         )
 
         # imu
         imu_ang_vel_b = ObsTerm(
             func=hugo_mdp.imu_ang_vel_b,
-            params={"sensor_cfg": SceneEntityCfg("imu"),},
+            params={"sensor_cfg": SceneEntityCfg("imu")},
         )
-
         imu_projected_gravity_b = ObsTerm(
             func=hugo_mdp.imu_projected_gravity_b,
-            params={"sensor_cfg": SceneEntityCfg("imu"),},
+            params={"sensor_cfg": SceneEntityCfg("imu")},
         )
 
-        # imu_lin_acc_residual_b = ObsTerm(
-        #     func=hugo_mdp.imu_lin_acc_residual_b,
-        #     params={
-        #     "sensor_cfg": SceneEntityCfg("imu"),
-        #     },
-        # )
-
         # feet states
-
         feet_contact = ObsTerm(
             func=hugo_mdp.feet_contact_state,
             params={
                 "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_feet"),
-                "threshold": 1.0,},
+                "threshold": 1.0,
+            },
         )
-
         feet_contact_force = ObsTerm(
             func=hugo_mdp.feet_contact_force,
-            params={"sensor_cfg": SceneEntityCfg("contact_forces",body_names=".*_feet",),},
+            params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_feet")},
         )
 
         # scan
         height_scan = ObsTerm(
             func=mdp.height_scan,
-            params={"sensor_cfg": SceneEntityCfg("height_scanner"),},
+            params={"sensor_cfg": SceneEntityCfg("height_scanner")},
         )
 
         # command
@@ -354,7 +321,7 @@ class ObservationsCfg:
             params={"command_name": "base_velocity"},
         )
 
-        # previous action: now contains revolute action only
+        # previous action
         actions = ObsTerm(func=mdp.last_action)
 
         def __post_init__(self) -> None:
@@ -370,14 +337,7 @@ class ObservationsCfg:
 
 @configclass
 class EventCfg:
-    """Event terms for reset/randomization.
-
-    For first-stage revolute-only walking:
-    - reset pose/velocity is kept mild
-    - joint reset randomization is applied only to revolute joints
-    - prismatic joints are not randomized
-    - external push is disabled for now
-    """
+    """Event terms for reset/randomization."""
 
     reset_base = EventTerm(
         func=mdp.reset_root_state_uniform,
@@ -399,7 +359,6 @@ class EventCfg:
         },
     )
 
-    # Apply reset randomization only to revolute joints.
     reset_robot_joints = EventTerm(
         func=mdp.reset_joints_by_offset,
         mode="reset",
@@ -432,19 +391,6 @@ class EventCfg:
         },
     )
 
-    # Disabled for first-stage walking.
-    # External disturbance can make the policy prefer standing/stabilization before it learns gait.
-    # push_robot = EventTerm(
-    #     func=mdp.apply_external_force_torque,
-    #     mode="interval",
-    #     interval_range_s=(3.0, 5.0),
-    #     params={
-    #         "asset_cfg": SceneEntityCfg("robot", body_names="base_link"),
-    #         "force_range": (-30.0, 30.0),
-    #         "torque_range": (-5.0, 5.0),
-    #     },
-    # )
-
 
 ##
 # Rewards
@@ -452,21 +398,13 @@ class EventCfg:
 
 @configclass
 class RewardsCfg:
-    """Reward terms for first-stage revolute-only walking.
+    """Reward terms (검증된 평지 세트).
 
-    Removed for now:
-    - body_height_error_l2
-    - body_height_abs_error
-
-    Kept:
-    - velocity tracking
-    - posture stabilization
-    - vertical velocity stabilization
-    - smoothness/energy penalties
+    anti-fluctuation 직접 보상은 여기 넣지 않는다.
+    걷기 수렴 후 base_height_l2를 추가하고 resume으로 다듬을 것.
     """
 
     # alive / termination
-    # Lower than 0.1 to reduce standing-only incentive.
     is_alive = RewTerm(
         func=mdp.is_alive,
         weight=0.05,
@@ -477,7 +415,7 @@ class RewardsCfg:
         weight=-5.0,
     )
 
-    # velocity tracking: strengthened to encourage forward walking attempts.
+    # velocity tracking
     track_lin_vel_xy = RewTerm(
         func=mdp.track_lin_vel_xy_exp,
         weight=2.5,
@@ -496,25 +434,23 @@ class RewardsCfg:
         },
     )
 
-    # Direct anti-fluctuation rewards are temporarily disabled.
-    # body_height_error_l2 = RewTerm(...)
-    # body_height_abs_error = RewTerm(...)
-
-    # vertical fluctuation penalty: suppress bouncing motion
+    # vertical fluctuation penalty
     lin_vel_z_l2 = RewTerm(
         func=mdp.lin_vel_z_l2,
-        weight=-0.25,
+        weight=-1.5,
     )
 
     # roll/pitch angular velocity penalty
     ang_vel_xy_l2 = RewTerm(
         func=mdp.ang_vel_xy_l2,
-        weight=-0.05,
+        weight=-0.25,
     )
 
     feet_air_time = RewTerm(
-        func=locomotion_mdp.feet_air_time, 
-        weight=0.5,#수정 후보 0.5-> 1.0
+        func=locomotion_mdp.feet_air_time,
+        # 주의: 이 항은 이 로봇에서 조작 이력이 많음 (weight 1.0 실험 실패,
+        # 장기 학습 시 호핑 유발 확인). 건드리지 말고 유지할 것.
+        weight=0.5,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_feet"),
             "command_name": "base_velocity",
@@ -526,26 +462,16 @@ class RewardsCfg:
         func=locomotion_mdp.undesired_contacts,
         weight=-1.0,
         params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*(outside|inside|base).*"), 
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*(outside|inside|base).*"),
             "threshold": 1.0,
         },
     )
 
-    # feet_slide = RewTerm(
-    # func=locomotion_mdp.feet_slide,
-    # weight=-0.1,
-    # params={
-    #     "sensor_cfg": SceneEntityCfg(
-    #         "contact_forces",
-    #         body_names=".*feet.*"
-    #     )
-    # }
-    # )
-
-    # posture stability: keep body reasonably flat
+    # posture stability (평지 검증값)
     flat_orientation_l2 = RewTerm(
         func=mdp.flat_orientation_l2,
-        weight=-5.0,)#평지에서는 몸통이 평행을 유지하는 것이 중요하므로 ANYmal은 이 패널티를 -5.0으로 아주 강하게 줍니다.
+        weight=-5.0,
+    )
 
     # smoothness
     action_rate_l2 = RewTerm(
@@ -569,12 +495,19 @@ class RewardsCfg:
         weight=-1.0e-7,
     )
 
-    # Joint limit penalty only for revolute joints.
     joint_pos_limits = RewTerm(
         func=mdp.joint_pos_limits,
         weight=-0.1,
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=[".*joint.*"]),
+        },
+    )
+    base_height_l2 = RewTerm(
+        func=mdp.base_height_l2,
+        weight=-5.0,
+        params={
+            "target_height": TARGET_BODY_HEIGHT,   # ①에서 확인/수정한 값
+            "asset_cfg": SceneEntityCfg("robot"),
         },
     )
 
@@ -592,8 +525,7 @@ class TerminationsCfg:
         time_out=True,
     )
 
-    # Previous 0.35 was too low: the body could collapse without immediate termination.
-    # Since spawn height is high, this only affects after the robot lands/settles.
+    # 평지에서는 절대 z 기준이 정확함 (지면 z=0).
     base_height = DoneTerm(
         func=mdp.root_height_below_minimum,
         params={
@@ -602,7 +534,6 @@ class TerminationsCfg:
         },
     )
 
-    # Previous 1.5 rad was very loose. 1.0 rad is still permissive but terminates clear falls earlier.
     bad_orientation = DoneTerm(
         func=mdp.bad_orientation,
         params={
@@ -618,7 +549,7 @@ class TerminationsCfg:
 
 @configclass
 class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
-    """Manager-based RL environment configuration for Hugo hexapod."""
+    """Manager-based RL environment configuration for Hugo hexapod (flat)."""
 
     scene: MultiLeggedRobotSceneCfg = MultiLeggedRobotSceneCfg(
         num_envs=4096,
@@ -635,7 +566,6 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
     def __post_init__(self) -> None:
         """Post initialization."""
 
-        # Policy/control frequency:
         # sim.dt = 1/200, decimation = 4 -> 50 Hz policy rate.
         self.decimation = DECIMATION
         self.episode_length_s = 20.0

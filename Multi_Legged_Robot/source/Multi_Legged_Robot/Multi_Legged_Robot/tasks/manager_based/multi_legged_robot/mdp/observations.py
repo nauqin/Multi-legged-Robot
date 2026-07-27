@@ -1,9 +1,6 @@
 import torch
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import ContactSensor
-import torch
-from isaaclab.managers import SceneEntityCfg
-from isaaclab.sensors import ContactSensor
 
 GRAVITY_MAG = 9.81
 

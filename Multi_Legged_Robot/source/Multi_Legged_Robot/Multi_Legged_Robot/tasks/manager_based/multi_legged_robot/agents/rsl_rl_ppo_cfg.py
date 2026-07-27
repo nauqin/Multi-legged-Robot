@@ -14,10 +14,10 @@ class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     max_iterations = 5000
     save_interval = 100
     experiment_name = "hugo_hexapod"
-    run_name = "flat4_random6_fresh"
+    run_name = ""
     resume = False
-    load_run = "2026-06-09_18-14-43_flat4_random6"
-    load_checkpoint = "model_3600.pt"
+    load_run = ".*"
+    load_checkpoint = "model_.*.pt"
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=False,
