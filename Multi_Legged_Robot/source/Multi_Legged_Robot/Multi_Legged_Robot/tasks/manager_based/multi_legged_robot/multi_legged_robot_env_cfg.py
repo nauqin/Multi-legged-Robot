@@ -3,20 +3,31 @@
 
 """Configuration for Hugo hexapod manager-based RL environment.
 
-FLAT-TERRAIN training configuration (fluctuation measurement baseline).
+BUMPS-TERRAIN training configuration (fluctuation measurement, rough condition).
 
 Purpose of this version:
-- train flat walking with the full sensor/observation set (231-dim obs, 30-dim action)
-- observation/action dimensions match the rough-terrain runs, so checkpoints
-  from either side can be loaded across configs
-- anti-fluctuation direct rewards (base_height_l2 etc.) are NOT included here;
-  add them later and resume from a converged walking checkpoint
-  (adding them to fresh training collapses into a standing-only policy —
-  verified experimentally)
+- adapt the flat anti-fluctuation policy (flat_antifluc2) to random bumpy
+  terrain matching the evaluation condition (HfRandomUniformTerrain, +-mm scale)
+- resume from flat_antifluc2 model_3000 (obs 231 / act 30 unchanged)
+- rewards are the antifluc2 set; base_height_l2 now uses the height scanner
+  so the height target follows the local ground instead of absolute world z
 
-Notes:
-- prismatic_pos action IS active (despite older comments saying otherwise).
-- Curriculum is intentionally absent: plane terrain has no difficulty levels.
+Differences vs. the flat config (each one is a lesson from the rough phase):
+- terrain: plane -> bumps generator (train seed != eval seed, so the policy
+  learns the terrain *type*, not the exact eval surface)
+- contact_forces narrowed to referenced bodies only (full `Robot/.*` on a
+  triangle mesh floods PhysX getMaterialFromInternalFaceIndex warnings and
+  stalls the physics step)
+- gpu_max_rigid_patch_count raised (default overflows on mesh terrain)
+- base_height_l2 gets sensor_cfg (absolute z target is wrong on uneven ground)
+
+Run (resume from flat_antifluc2):
+    python scripts/rsl_rl/train.py --task Hugo-Hexapod-v0 --headless \
+        --num_envs 2000 \
+        --resume --load_run 2026-07-27_23-12-47_flat_antifluc2 \
+        --checkpoint model_3000.pt \
+        --run_name bumps_antifluc
+    (mesh terrain + 4096 envs caused GPU OOM before; 2000 is the verified safe count)
 """
 
 from __future__ import annotations
@@ -24,6 +35,7 @@ from __future__ import annotations
 import math
 
 import isaaclab.sim as sim_utils
+import isaaclab.terrains as terrain_gen
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
@@ -56,14 +68,11 @@ from isaaclab.terrains import TerrainImporterCfg
 
 ROBOT_USD_PATH = "/home/ubin/Hugo_Project/usd files/hugo_hexapod_ver2/hugo_hexapod_ver2.usd"
 
-# anti-fluctuation 단계에서 base_height_l2 보상을 추가할 때 사용.
-# 지금은 정의만 해두고 보상에는 연결하지 않는다 (fresh 학습에 걸면 서 있기
-# 국소해로 붕괴하는 것을 실험으로 확인함).
-# 주의: 연결 전에 play로 잘 걷는 정책의 실제 몸통 높이를 재서 이 값이 맞는지
-#       확인할 것. 자연 보행 높이와 어긋난 목표는 걸음을 뒤틀리게 한다.
+# 몸통 목표 높이. bumps에서는 sensor_cfg를 통해 "발밑 지면 대비" 높이로 해석된다.
 TARGET_BODY_HEIGHT = 1.02
 
-# 검증된 평지 spawn 높이.
+# 스폰 높이. use_terrain_origins=True라 각 패치 원점 위에서 스폰된다.
+# bumps 요철이 최대 +-5cm 수준이므로 검증된 1.8을 그대로 유지.
 INITIAL_BODY_HEIGHT = 1.8
 
 # 50 Hz action period: sim.dt=1/200, decimation=4
@@ -75,27 +84,71 @@ GRAVITY_MAG = 9.81
 
 
 ##
+# Bumps terrain settings (학습용)
+##
+
+# 학습 요철 진폭 [mm]. 측정(30mm)보다 약간 크게 잡아 여유를 둔다.
+# 50mm 가혹 조건까지 측정할 계획이면 50으로 올려서 재학습.
+TRAIN_BUMPS_AMPLITUDE_MM = 40.0
+
+# 학습용 seed. 측정 지형(EVAL_SEED=20260725)과 반드시 달라야 한다 —
+# 같으면 "그 지형을 외운" 정책이라는 지적을 피할 수 없다.
+TRAIN_TERRAIN_SEED = 77
+
+_AMP = TRAIN_BUMPS_AMPLITUDE_MM / 1000.0
+
+# 학습용 지형: 측정과 같은 지형 *종류* (HfRandomUniformTerrain),
+# 다른 seed. 커리큘럼 없음 (단일 난이도라 필요 없음).
+# 패치는 4x8=32개, env들이 패치를 공유한다 (학습에서는 문제없음 —
+# 1 env : 1 patch는 측정 전용 요구사항).
+HUGO_BUMPS_TERRAIN_IMPORTER_CFG = TerrainImporterCfg(
+    prim_path="/World/ground",
+    terrain_type="generator",
+    terrain_generator=terrain_gen.TerrainGeneratorCfg(
+        seed=TRAIN_TERRAIN_SEED,
+        curriculum=False,
+        difficulty_range=(1.0, 1.0),
+        size=(8.0, 8.0),
+        border_width=20.0,
+        border_height=0.0,
+        num_rows=4,
+        num_cols=8,
+        horizontal_scale=0.1,
+        vertical_scale=0.002,   # 2mm 양자화 (측정 지형과 동일)
+        slope_threshold=0.75,
+        color_scheme="none",
+        use_cache=False,        # 파라미터 바꿀 때 옛 지형 재사용 사고 방지
+        sub_terrains={
+            "bumps": terrain_gen.HfRandomUniformTerrainCfg(
+                proportion=1.0,
+                noise_range=(-_AMP, _AMP),
+                noise_step=max(_AMP / 5.0, 0.005),
+                border_width=0.25,
+            ),
+        },
+    ),
+    use_terrain_origins=True,
+    max_init_terrain_level=None,   # 난이도 1개뿐이라 무의미하지만 명시
+    env_spacing=4.0,
+    debug_vis=False,
+    physics_material=sim_utils.RigidBodyMaterialCfg(
+        static_friction=1.0,
+        dynamic_friction=1.0,
+        restitution=0.0,
+    ),
+    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.75, 0.75, 0.75)),
+)
+
+
+##
 # Scene definition
 ##
 
 @configclass
 class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
-    """Scene configuration for Hugo hexapod (flat terrain)."""
+    """Scene configuration for Hugo hexapod (bumps terrain)."""
 
-    # 검증된 평지 설정: 원래 flat 학습(2033 iter, reward 59.76 수렴)과 동일.
-    # physics_material을 명시해 마찰 결합 방식이 기본값으로 바뀌지 않게 한다
-    # (로봇 쪽 마찰 랜덤화 0.6~1.2와의 결합이 검증된 run과 같아야 함).
-    terrain = TerrainImporterCfg(
-        prim_path="/World/ground",
-        terrain_type="plane",
-        collision_group=-1,
-        physics_material=sim_utils.RigidBodyMaterialCfg(
-            friction_combine_mode="multiply",
-            restitution_combine_mode="multiply",
-            static_friction=1.0,
-            dynamic_friction=1.0,
-        ),
-    )
+    terrain = HUGO_BUMPS_TERRAIN_IMPORTER_CFG
 
     robot = ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
@@ -148,10 +201,11 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
         },
     )
 
-    # 평지(해석적 평면)에서는 전 링크 접촉 센서가 문제를 일으키지 않는다.
-    # (러프 삼각형 메시로 갈 때만 범위 축소 필요)
+    # 삼각형 메시 지형이므로 참조되는 body만으로 범위 축소 필수.
+    # `Robot/.*` 전체로 걸면 PhysX getMaterialFromInternalFaceIndex 경고가
+    # 폭주해 물리 스텝이 로깅에 막힌다 (러프 단계에서 확인된 문제).
     contact_forces = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/.*",
+        prim_path="{ENV_REGEX_NS}/Robot/.*(feet|outside|inside|base).*",
         history_length=3,
         track_air_time=True,
     )
@@ -168,9 +222,9 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
         gravity_bias=(0.0, 0.0, GRAVITY_MAG),
     )
 
-    # 평지용 스캐너: 낮은 오프셋(0.30)과 5 m max_distance면 충분.
-    # (20 m 오프셋은 계단/경사에서 시작점이 지형에 묻히는 것을 막기 위한
-    #  러프 전용 설정이었음)
+    # bumps는 요철이 +-5cm 이내라 평지형 스캐너 설정(오프셋 0.30, 5 m)으로 충분.
+    # (20 m 오프셋은 계단/급경사에서 레이 시작점이 지형에 묻히는 것을 막는
+    #  설정이었고, 이 지형에서는 불필요)
     height_scanner = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base_link",
         update_period=SIM_DT * DECIMATION,
@@ -226,7 +280,6 @@ class CommandsCfg:
 class ActionsCfg:
     """Action specifications (30-dim: roll 6 + pitch 12 + prismatic 12)."""
 
-    # Roll 관절 (자세 유지)
     roll_pos = mdp.JointPositionActionCfg(
         asset_name="robot",
         joint_names=[".*roll"],
@@ -234,7 +287,6 @@ class ActionsCfg:
         use_default_offset=True,
     )
 
-    # Pitch 관절 (보행)
     pitch_pos = mdp.JointPositionActionCfg(
         asset_name="robot",
         joint_names=[".*pitch"],
@@ -242,7 +294,7 @@ class ActionsCfg:
         use_default_offset=True,
     )
 
-    # 활성 상태. anti-fluctuation 단계에서 높이 제어를 담당할 관절이므로 유지.
+    # bumps에서 발밑 요철을 prismatic으로 흡수하는 것이 이 로봇의 설계 의도.
     prismatic_pos = mdp.JointPositionActionCfg(
         asset_name="robot",
         joint_names=[".*prismatic.*"],
@@ -261,7 +313,7 @@ class ObservationsCfg:
 
     @configclass
     class PolicyCfg(ObsGroup):
-        """Policy observations (231-dim, rough-terrain 구성과 동일)."""
+        """Policy observations (231-dim, flat/rough 구성과 동일 — 체크포인트 호환)."""
 
         # base state
         base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
@@ -398,10 +450,11 @@ class EventCfg:
 
 @configclass
 class RewardsCfg:
-    """Reward terms (검증된 평지 세트).
+    """Reward terms — flat_antifluc2 세트를 그대로 유지.
 
-    anti-fluctuation 직접 보상은 여기 넣지 않는다.
-    걷기 수렴 후 base_height_l2를 추가하고 resume으로 다듬을 것.
+    유일한 변경: base_height_l2에 sensor_cfg 추가.
+    bumps에서는 절대 z 목표가 지면 요철만큼 오차를 내장하므로,
+    height scanner 기준 상대 높이로 판정하도록 한다.
     """
 
     # alive / termination
@@ -434,13 +487,13 @@ class RewardsCfg:
         },
     )
 
-    # vertical fluctuation penalty
+    # vertical fluctuation penalty (antifluc2 강화값)
     lin_vel_z_l2 = RewTerm(
         func=mdp.lin_vel_z_l2,
         weight=-1.5,
     )
 
-    # roll/pitch angular velocity penalty
+    # roll/pitch angular velocity penalty (antifluc2 강화값)
     ang_vel_xy_l2 = RewTerm(
         func=mdp.ang_vel_xy_l2,
         weight=-0.25,
@@ -467,7 +520,8 @@ class RewardsCfg:
         },
     )
 
-    # posture stability (평지 검증값)
+    # posture stability
+    # bumps는 국소 요철이라 몸통은 계속 수평이 맞다 (경사와 다름) — -5.0 유지.
     flat_orientation_l2 = RewTerm(
         func=mdp.flat_orientation_l2,
         weight=-5.0,
@@ -502,12 +556,17 @@ class RewardsCfg:
             "asset_cfg": SceneEntityCfg("robot", joint_names=[".*joint.*"]),
         },
     )
+
+    # anti-fluctuation: 발밑 지면 대비 몸통 높이 유지.
+    # sensor_cfg가 있으면 base_height_l2는 스캔된 지면 높이만큼 목표를 보정한다
+    # -> 측정 지표 z_rel과 정확히 같은 양을 최적화하게 된다.
     base_height_l2 = RewTerm(
         func=mdp.base_height_l2,
         weight=-5.0,
         params={
-            "target_height": TARGET_BODY_HEIGHT,   # ①에서 확인/수정한 값
+            "target_height": TARGET_BODY_HEIGHT,
             "asset_cfg": SceneEntityCfg("robot"),
+            "sensor_cfg": SceneEntityCfg("height_scanner"),
         },
     )
 
@@ -525,12 +584,14 @@ class TerminationsCfg:
         time_out=True,
     )
 
-    # 평지에서는 절대 z 기준이 정확함 (지면 z=0).
+    # bumps 요철은 +-5cm 이내라 절대 z 기준 0.65도 오작동하지 않지만,
+    # 러프 단계에서 만든 상대 높이 termination을 쓰는 것이 더 정확하다.
     base_height = DoneTerm(
-        func=mdp.root_height_below_minimum,
+        func=hugo_mdp.root_height_below_minimum_rel,
         params={
-            "minimum_height": 0.65,
+            "minimum_height": 0.45,
             "asset_cfg": SceneEntityCfg("robot"),
+            "sensor_cfg": SceneEntityCfg("height_scanner"),
         },
     )
 
@@ -549,10 +610,10 @@ class TerminationsCfg:
 
 @configclass
 class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
-    """Manager-based RL environment configuration for Hugo hexapod (flat)."""
+    """Manager-based RL environment configuration for Hugo hexapod (bumps)."""
 
     scene: MultiLeggedRobotSceneCfg = MultiLeggedRobotSceneCfg(
-        num_envs=4096,
+        num_envs=4096,   # 명령줄 --num_envs 2000 권장 (메시 지형 + 4096은 OOM 이력)
         env_spacing=4.0,
     )
 
@@ -574,6 +635,12 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.dt = SIM_DT
         self.sim.render_interval = self.decimation
         self.scene.height_scanner.update_period = (SIM_DT * DECIMATION)
+
+        # --- PhysX GPU buffers ------------------------------------------
+        # 삼각형 메시 지형 + 수천 env 접촉이면 기본값(5*2**15=163840)이 넘쳐
+        # "Patch buffer overflow" 에러가 매 스텝 쏟아지고 iteration time이
+        # 몇 배로 늘어난다 (러프 단계에서 확인). 또 터지면 2**21로.
+        self.sim.physx.gpu_max_rigid_patch_count = 2**20
 
         # viewer
         self.viewer.eye = (5.0, 5.0, 4.0)
