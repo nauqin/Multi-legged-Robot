@@ -33,7 +33,7 @@ def generate_urdf():
     <child link="{prefix}_hip_dummy"/>
     <origin xyz="{x} {y} 0" rpy="0 0 0"/>
     <axis xyz="1 0 0"/>
-    <limit lower="-0.5" upper="0.5" effort="200" velocity="2.0"/>
+    <limit lower="-0.8" upper="0.8" effort="200" velocity="2.0"/>
   </joint>
 
   <link name="{prefix}_hip_dummy">
@@ -45,7 +45,7 @@ def generate_urdf():
     <child link="{prefix}_sphere1"/>
     <origin xyz="0 0 0" rpy="0 0 0"/>
     <axis xyz="0 1 0"/>
-    <limit lower="-1.0" upper="1.0" effort="200" velocity="2.0"/>
+    <limit lower="-1.5" upper="1.5" effort="200" velocity="2.0"/>
   </joint>
 
   <link name="{prefix}_sphere1">

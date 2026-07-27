@@ -11,9 +11,13 @@ from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, R
 @configclass
 class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 16
-    max_iterations = 150
-    save_interval = 50
-    experiment_name = "cartpole_direct"
+    max_iterations = 5000
+    save_interval = 100
+    experiment_name = "hugo_hexapod"
+    run_name = ""
+    resume = False
+    load_run = ".*"
+    load_checkpoint = "model_.*.pt"
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=False,
