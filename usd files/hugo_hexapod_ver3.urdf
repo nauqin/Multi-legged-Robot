@@ -1,0 +1,1035 @@
+<?xml version="1.0"?>
+<robot name="hugo_hexapod_ver3">
+
+  <!-- ================= base ================= -->
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <mass value="38.000"/>
+      <inertia ixx="1.211250" ixy="0" ixz="0" iyy="3.237917" iyz="0" izz="4.306667"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><box size="1.0 0.6 0.15"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><box size="1.0 0.6 0.15"/></geometry>
+    </collision>
+  </link>
+
+  <!-- ================= leg L1 ================= -->
+  <link name="L1_hip_dummy">
+    <inertial>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <mass value="1.900"/>
+      <inertia ixx="0.002280" ixy="0" ixz="0" iyy="0.002280" iyz="0" izz="0.003420"/>
+    </inertial>
+  </link>
+  <link name="L1_sphere1">
+    <inertial>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <mass value="4.300"/>
+      <inertia ixx="0.006163" ixy="0" ixz="0" iyy="0.006163" iyz="0" izz="0.007740"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.06" length="0.08"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.06" length="0.08"/></geometry>
+    </collision>
+  </link>
+  <link name="L1_inside">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="7.500"/>
+      <inertia ixx="0.058547" ixy="0" ixz="0" iyy="0.058547" iyz="0" izz="0.004594"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="L1_outside">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="0.800"/>
+      <inertia ixx="0.006405" ixy="0" ixz="0" iyy="0.006405" iyz="0" izz="0.000810"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="L1_sphere2">
+    <inertial>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <mass value="3.400"/>
+      <inertia ixx="0.003960" ixy="0" ixz="0" iyy="0.003960" iyz="0" izz="0.005143"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.055" length="0.07"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.055" length="0.07"/></geometry>
+    </collision>
+  </link>
+  <link name="L1_inside2">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="7.500"/>
+      <inertia ixx="0.058547" ixy="0" ixz="0" iyy="0.058547" iyz="0" izz="0.004594"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="L1_outside2">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="0.800"/>
+      <inertia ixx="0.006405" ixy="0" ixz="0" iyy="0.006405" iyz="0" izz="0.000810"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="L1_feet">
+    <inertial>
+      <origin xyz="0 0 -0.0100" rpy="0 0 0"/>
+      <mass value="0.500"/>
+      <inertia ixx="0.000217" ixy="0" ixz="0" iyy="0.000217" iyz="0" izz="0.000400"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.0100" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.04" length="0.02"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.0100" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.04" length="0.02"/></geometry>
+    </collision>
+  </link>
+  <joint name="L1_joint1_roll" type="revolute">
+    <parent link="base_link"/>
+    <child link="L1_hip_dummy"/>
+    <origin xyz="0.45 0.3 0" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-2.0" upper="2.0" effort="500.0" velocity="5.0"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="L1_joint2_pitch" type="revolute">
+    <parent link="L1_hip_dummy"/>
+    <child link="L1_sphere1"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.0" upper="2.0" effort="500.0" velocity="5.0"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="L1_prismatic1" type="prismatic">
+    <parent link="L1_sphere1"/>
+    <child link="L1_outside"/>
+    <origin xyz="0 0 -0.03" rpy="0 0 0"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="0.0" upper="0.15" effort="1000.0" velocity="0.25"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="L1_joint3_pitch" type="revolute">
+    <parent link="L1_outside"/>
+    <child link="L1_sphere2"/>
+    <origin xyz="0 0 -0.3" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.0" upper="2.0" effort="500.0" velocity="5.0"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="L1_prismatic2" type="prismatic">
+    <parent link="L1_sphere2"/>
+    <child link="L1_outside2"/>
+    <origin xyz="0 0 -0.03" rpy="0 0 0"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="0.0" upper="0.15" effort="1000.0" velocity="0.25"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="L1_foot_fix" type="fixed">
+    <parent link="L1_outside2"/>
+    <child link="L1_feet"/>
+    <origin xyz="0 0 -0.3" rpy="0 0 0"/>
+  </joint>
+  <joint name="L1_inside_fix" type="fixed">
+    <parent link="L1_sphere1"/>
+    <child link="L1_inside"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+  <joint name="L1_inside2_fix" type="fixed">
+    <parent link="L1_sphere2"/>
+    <child link="L1_inside2"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ================= leg L2 ================= -->
+  <link name="L2_hip_dummy">
+    <inertial>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <mass value="1.900"/>
+      <inertia ixx="0.002280" ixy="0" ixz="0" iyy="0.002280" iyz="0" izz="0.003420"/>
+    </inertial>
+  </link>
+  <link name="L2_sphere1">
+    <inertial>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <mass value="4.300"/>
+      <inertia ixx="0.006163" ixy="0" ixz="0" iyy="0.006163" iyz="0" izz="0.007740"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.06" length="0.08"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.06" length="0.08"/></geometry>
+    </collision>
+  </link>
+  <link name="L2_inside">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="7.500"/>
+      <inertia ixx="0.058547" ixy="0" ixz="0" iyy="0.058547" iyz="0" izz="0.004594"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="L2_outside">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="0.800"/>
+      <inertia ixx="0.006405" ixy="0" ixz="0" iyy="0.006405" iyz="0" izz="0.000810"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="L2_sphere2">
+    <inertial>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <mass value="3.400"/>
+      <inertia ixx="0.003960" ixy="0" ixz="0" iyy="0.003960" iyz="0" izz="0.005143"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.055" length="0.07"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.055" length="0.07"/></geometry>
+    </collision>
+  </link>
+  <link name="L2_inside2">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="7.500"/>
+      <inertia ixx="0.058547" ixy="0" ixz="0" iyy="0.058547" iyz="0" izz="0.004594"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="L2_outside2">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="0.800"/>
+      <inertia ixx="0.006405" ixy="0" ixz="0" iyy="0.006405" iyz="0" izz="0.000810"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="L2_feet">
+    <inertial>
+      <origin xyz="0 0 -0.0100" rpy="0 0 0"/>
+      <mass value="0.500"/>
+      <inertia ixx="0.000217" ixy="0" ixz="0" iyy="0.000217" iyz="0" izz="0.000400"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.0100" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.04" length="0.02"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.0100" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.04" length="0.02"/></geometry>
+    </collision>
+  </link>
+  <joint name="L2_joint1_roll" type="revolute">
+    <parent link="base_link"/>
+    <child link="L2_hip_dummy"/>
+    <origin xyz="0.0 0.3 0" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-2.0" upper="2.0" effort="500.0" velocity="5.0"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="L2_joint2_pitch" type="revolute">
+    <parent link="L2_hip_dummy"/>
+    <child link="L2_sphere1"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.0" upper="2.0" effort="500.0" velocity="5.0"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="L2_prismatic1" type="prismatic">
+    <parent link="L2_sphere1"/>
+    <child link="L2_outside"/>
+    <origin xyz="0 0 -0.03" rpy="0 0 0"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="0.0" upper="0.15" effort="1000.0" velocity="0.25"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="L2_joint3_pitch" type="revolute">
+    <parent link="L2_outside"/>
+    <child link="L2_sphere2"/>
+    <origin xyz="0 0 -0.3" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.0" upper="2.0" effort="500.0" velocity="5.0"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="L2_prismatic2" type="prismatic">
+    <parent link="L2_sphere2"/>
+    <child link="L2_outside2"/>
+    <origin xyz="0 0 -0.03" rpy="0 0 0"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="0.0" upper="0.15" effort="1000.0" velocity="0.25"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="L2_foot_fix" type="fixed">
+    <parent link="L2_outside2"/>
+    <child link="L2_feet"/>
+    <origin xyz="0 0 -0.3" rpy="0 0 0"/>
+  </joint>
+  <joint name="L2_inside_fix" type="fixed">
+    <parent link="L2_sphere1"/>
+    <child link="L2_inside"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+  <joint name="L2_inside2_fix" type="fixed">
+    <parent link="L2_sphere2"/>
+    <child link="L2_inside2"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ================= leg L3 ================= -->
+  <link name="L3_hip_dummy">
+    <inertial>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <mass value="1.900"/>
+      <inertia ixx="0.002280" ixy="0" ixz="0" iyy="0.002280" iyz="0" izz="0.003420"/>
+    </inertial>
+  </link>
+  <link name="L3_sphere1">
+    <inertial>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <mass value="4.300"/>
+      <inertia ixx="0.006163" ixy="0" ixz="0" iyy="0.006163" iyz="0" izz="0.007740"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.06" length="0.08"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.06" length="0.08"/></geometry>
+    </collision>
+  </link>
+  <link name="L3_inside">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="7.500"/>
+      <inertia ixx="0.058547" ixy="0" ixz="0" iyy="0.058547" iyz="0" izz="0.004594"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="L3_outside">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="0.800"/>
+      <inertia ixx="0.006405" ixy="0" ixz="0" iyy="0.006405" iyz="0" izz="0.000810"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="L3_sphere2">
+    <inertial>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <mass value="3.400"/>
+      <inertia ixx="0.003960" ixy="0" ixz="0" iyy="0.003960" iyz="0" izz="0.005143"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.055" length="0.07"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.055" length="0.07"/></geometry>
+    </collision>
+  </link>
+  <link name="L3_inside2">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="7.500"/>
+      <inertia ixx="0.058547" ixy="0" ixz="0" iyy="0.058547" iyz="0" izz="0.004594"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="L3_outside2">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="0.800"/>
+      <inertia ixx="0.006405" ixy="0" ixz="0" iyy="0.006405" iyz="0" izz="0.000810"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="L3_feet">
+    <inertial>
+      <origin xyz="0 0 -0.0100" rpy="0 0 0"/>
+      <mass value="0.500"/>
+      <inertia ixx="0.000217" ixy="0" ixz="0" iyy="0.000217" iyz="0" izz="0.000400"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.0100" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.04" length="0.02"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.0100" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.04" length="0.02"/></geometry>
+    </collision>
+  </link>
+  <joint name="L3_joint1_roll" type="revolute">
+    <parent link="base_link"/>
+    <child link="L3_hip_dummy"/>
+    <origin xyz="-0.45 0.3 0" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-2.0" upper="2.0" effort="500.0" velocity="5.0"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="L3_joint2_pitch" type="revolute">
+    <parent link="L3_hip_dummy"/>
+    <child link="L3_sphere1"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.0" upper="2.0" effort="500.0" velocity="5.0"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="L3_prismatic1" type="prismatic">
+    <parent link="L3_sphere1"/>
+    <child link="L3_outside"/>
+    <origin xyz="0 0 -0.03" rpy="0 0 0"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="0.0" upper="0.15" effort="1000.0" velocity="0.25"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="L3_joint3_pitch" type="revolute">
+    <parent link="L3_outside"/>
+    <child link="L3_sphere2"/>
+    <origin xyz="0 0 -0.3" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.0" upper="2.0" effort="500.0" velocity="5.0"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="L3_prismatic2" type="prismatic">
+    <parent link="L3_sphere2"/>
+    <child link="L3_outside2"/>
+    <origin xyz="0 0 -0.03" rpy="0 0 0"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="0.0" upper="0.15" effort="1000.0" velocity="0.25"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="L3_foot_fix" type="fixed">
+    <parent link="L3_outside2"/>
+    <child link="L3_feet"/>
+    <origin xyz="0 0 -0.3" rpy="0 0 0"/>
+  </joint>
+  <joint name="L3_inside_fix" type="fixed">
+    <parent link="L3_sphere1"/>
+    <child link="L3_inside"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+  <joint name="L3_inside2_fix" type="fixed">
+    <parent link="L3_sphere2"/>
+    <child link="L3_inside2"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ================= leg R1 ================= -->
+  <link name="R1_hip_dummy">
+    <inertial>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <mass value="1.900"/>
+      <inertia ixx="0.002280" ixy="0" ixz="0" iyy="0.002280" iyz="0" izz="0.003420"/>
+    </inertial>
+  </link>
+  <link name="R1_sphere1">
+    <inertial>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <mass value="4.300"/>
+      <inertia ixx="0.006163" ixy="0" ixz="0" iyy="0.006163" iyz="0" izz="0.007740"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.06" length="0.08"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.06" length="0.08"/></geometry>
+    </collision>
+  </link>
+  <link name="R1_inside">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="7.500"/>
+      <inertia ixx="0.058547" ixy="0" ixz="0" iyy="0.058547" iyz="0" izz="0.004594"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="R1_outside">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="0.800"/>
+      <inertia ixx="0.006405" ixy="0" ixz="0" iyy="0.006405" iyz="0" izz="0.000810"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="R1_sphere2">
+    <inertial>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <mass value="3.400"/>
+      <inertia ixx="0.003960" ixy="0" ixz="0" iyy="0.003960" iyz="0" izz="0.005143"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.055" length="0.07"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.055" length="0.07"/></geometry>
+    </collision>
+  </link>
+  <link name="R1_inside2">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="7.500"/>
+      <inertia ixx="0.058547" ixy="0" ixz="0" iyy="0.058547" iyz="0" izz="0.004594"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="R1_outside2">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="0.800"/>
+      <inertia ixx="0.006405" ixy="0" ixz="0" iyy="0.006405" iyz="0" izz="0.000810"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="R1_feet">
+    <inertial>
+      <origin xyz="0 0 -0.0100" rpy="0 0 0"/>
+      <mass value="0.500"/>
+      <inertia ixx="0.000217" ixy="0" ixz="0" iyy="0.000217" iyz="0" izz="0.000400"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.0100" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.04" length="0.02"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.0100" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.04" length="0.02"/></geometry>
+    </collision>
+  </link>
+  <joint name="R1_joint1_roll" type="revolute">
+    <parent link="base_link"/>
+    <child link="R1_hip_dummy"/>
+    <origin xyz="0.45 -0.3 0" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-2.0" upper="2.0" effort="500.0" velocity="5.0"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="R1_joint2_pitch" type="revolute">
+    <parent link="R1_hip_dummy"/>
+    <child link="R1_sphere1"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.0" upper="2.0" effort="500.0" velocity="5.0"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="R1_prismatic1" type="prismatic">
+    <parent link="R1_sphere1"/>
+    <child link="R1_outside"/>
+    <origin xyz="0 0 -0.03" rpy="0 0 0"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="0.0" upper="0.15" effort="1000.0" velocity="0.25"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="R1_joint3_pitch" type="revolute">
+    <parent link="R1_outside"/>
+    <child link="R1_sphere2"/>
+    <origin xyz="0 0 -0.3" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.0" upper="2.0" effort="500.0" velocity="5.0"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="R1_prismatic2" type="prismatic">
+    <parent link="R1_sphere2"/>
+    <child link="R1_outside2"/>
+    <origin xyz="0 0 -0.03" rpy="0 0 0"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="0.0" upper="0.15" effort="1000.0" velocity="0.25"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="R1_foot_fix" type="fixed">
+    <parent link="R1_outside2"/>
+    <child link="R1_feet"/>
+    <origin xyz="0 0 -0.3" rpy="0 0 0"/>
+  </joint>
+  <joint name="R1_inside_fix" type="fixed">
+    <parent link="R1_sphere1"/>
+    <child link="R1_inside"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+  <joint name="R1_inside2_fix" type="fixed">
+    <parent link="R1_sphere2"/>
+    <child link="R1_inside2"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ================= leg R2 ================= -->
+  <link name="R2_hip_dummy">
+    <inertial>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <mass value="1.900"/>
+      <inertia ixx="0.002280" ixy="0" ixz="0" iyy="0.002280" iyz="0" izz="0.003420"/>
+    </inertial>
+  </link>
+  <link name="R2_sphere1">
+    <inertial>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <mass value="4.300"/>
+      <inertia ixx="0.006163" ixy="0" ixz="0" iyy="0.006163" iyz="0" izz="0.007740"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.06" length="0.08"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.06" length="0.08"/></geometry>
+    </collision>
+  </link>
+  <link name="R2_inside">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="7.500"/>
+      <inertia ixx="0.058547" ixy="0" ixz="0" iyy="0.058547" iyz="0" izz="0.004594"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="R2_outside">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="0.800"/>
+      <inertia ixx="0.006405" ixy="0" ixz="0" iyy="0.006405" iyz="0" izz="0.000810"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="R2_sphere2">
+    <inertial>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <mass value="3.400"/>
+      <inertia ixx="0.003960" ixy="0" ixz="0" iyy="0.003960" iyz="0" izz="0.005143"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.055" length="0.07"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.055" length="0.07"/></geometry>
+    </collision>
+  </link>
+  <link name="R2_inside2">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="7.500"/>
+      <inertia ixx="0.058547" ixy="0" ixz="0" iyy="0.058547" iyz="0" izz="0.004594"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="R2_outside2">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="0.800"/>
+      <inertia ixx="0.006405" ixy="0" ixz="0" iyy="0.006405" iyz="0" izz="0.000810"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="R2_feet">
+    <inertial>
+      <origin xyz="0 0 -0.0100" rpy="0 0 0"/>
+      <mass value="0.500"/>
+      <inertia ixx="0.000217" ixy="0" ixz="0" iyy="0.000217" iyz="0" izz="0.000400"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.0100" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.04" length="0.02"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.0100" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.04" length="0.02"/></geometry>
+    </collision>
+  </link>
+  <joint name="R2_joint1_roll" type="revolute">
+    <parent link="base_link"/>
+    <child link="R2_hip_dummy"/>
+    <origin xyz="0.0 -0.3 0" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-2.0" upper="2.0" effort="500.0" velocity="5.0"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="R2_joint2_pitch" type="revolute">
+    <parent link="R2_hip_dummy"/>
+    <child link="R2_sphere1"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.0" upper="2.0" effort="500.0" velocity="5.0"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="R2_prismatic1" type="prismatic">
+    <parent link="R2_sphere1"/>
+    <child link="R2_outside"/>
+    <origin xyz="0 0 -0.03" rpy="0 0 0"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="0.0" upper="0.15" effort="1000.0" velocity="0.25"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="R2_joint3_pitch" type="revolute">
+    <parent link="R2_outside"/>
+    <child link="R2_sphere2"/>
+    <origin xyz="0 0 -0.3" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.0" upper="2.0" effort="500.0" velocity="5.0"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="R2_prismatic2" type="prismatic">
+    <parent link="R2_sphere2"/>
+    <child link="R2_outside2"/>
+    <origin xyz="0 0 -0.03" rpy="0 0 0"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="0.0" upper="0.15" effort="1000.0" velocity="0.25"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="R2_foot_fix" type="fixed">
+    <parent link="R2_outside2"/>
+    <child link="R2_feet"/>
+    <origin xyz="0 0 -0.3" rpy="0 0 0"/>
+  </joint>
+  <joint name="R2_inside_fix" type="fixed">
+    <parent link="R2_sphere1"/>
+    <child link="R2_inside"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+  <joint name="R2_inside2_fix" type="fixed">
+    <parent link="R2_sphere2"/>
+    <child link="R2_inside2"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ================= leg R3 ================= -->
+  <link name="R3_hip_dummy">
+    <inertial>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <mass value="1.900"/>
+      <inertia ixx="0.002280" ixy="0" ixz="0" iyy="0.002280" iyz="0" izz="0.003420"/>
+    </inertial>
+  </link>
+  <link name="R3_sphere1">
+    <inertial>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <mass value="4.300"/>
+      <inertia ixx="0.006163" ixy="0" ixz="0" iyy="0.006163" iyz="0" izz="0.007740"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.06" length="0.08"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.06" length="0.08"/></geometry>
+    </collision>
+  </link>
+  <link name="R3_inside">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="7.500"/>
+      <inertia ixx="0.058547" ixy="0" ixz="0" iyy="0.058547" iyz="0" izz="0.004594"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="R3_outside">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="0.800"/>
+      <inertia ixx="0.006405" ixy="0" ixz="0" iyy="0.006405" iyz="0" izz="0.000810"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="R3_sphere2">
+    <inertial>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <mass value="3.400"/>
+      <inertia ixx="0.003960" ixy="0" ixz="0" iyy="0.003960" iyz="0" izz="0.005143"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.055" length="0.07"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.0000" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.055" length="0.07"/></geometry>
+    </collision>
+  </link>
+  <link name="R3_inside2">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="7.500"/>
+      <inertia ixx="0.058547" ixy="0" ixz="0" iyy="0.058547" iyz="0" izz="0.004594"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.035" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="R3_outside2">
+    <inertial>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <mass value="0.800"/>
+      <inertia ixx="0.006405" ixy="0" ixz="0" iyy="0.006405" iyz="0" izz="0.000810"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.1500" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.045" length="0.3"/></geometry>
+    </collision>
+  </link>
+  <link name="R3_feet">
+    <inertial>
+      <origin xyz="0 0 -0.0100" rpy="0 0 0"/>
+      <mass value="0.500"/>
+      <inertia ixx="0.000217" ixy="0" ixz="0" iyy="0.000217" iyz="0" izz="0.000400"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.0100" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.04" length="0.02"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.0100" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.04" length="0.02"/></geometry>
+    </collision>
+  </link>
+  <joint name="R3_joint1_roll" type="revolute">
+    <parent link="base_link"/>
+    <child link="R3_hip_dummy"/>
+    <origin xyz="-0.45 -0.3 0" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-2.0" upper="2.0" effort="500.0" velocity="5.0"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="R3_joint2_pitch" type="revolute">
+    <parent link="R3_hip_dummy"/>
+    <child link="R3_sphere1"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.0" upper="2.0" effort="500.0" velocity="5.0"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="R3_prismatic1" type="prismatic">
+    <parent link="R3_sphere1"/>
+    <child link="R3_outside"/>
+    <origin xyz="0 0 -0.03" rpy="0 0 0"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="0.0" upper="0.15" effort="1000.0" velocity="0.25"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="R3_joint3_pitch" type="revolute">
+    <parent link="R3_outside"/>
+    <child link="R3_sphere2"/>
+    <origin xyz="0 0 -0.3" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.0" upper="2.0" effort="500.0" velocity="5.0"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="R3_prismatic2" type="prismatic">
+    <parent link="R3_sphere2"/>
+    <child link="R3_outside2"/>
+    <origin xyz="0 0 -0.03" rpy="0 0 0"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="0.0" upper="0.15" effort="1000.0" velocity="0.25"/>
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+  <joint name="R3_foot_fix" type="fixed">
+    <parent link="R3_outside2"/>
+    <child link="R3_feet"/>
+    <origin xyz="0 0 -0.3" rpy="0 0 0"/>
+  </joint>
+  <joint name="R3_inside_fix" type="fixed">
+    <parent link="R3_sphere1"/>
+    <child link="R3_inside"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+  <joint name="R3_inside2_fix" type="fixed">
+    <parent link="R3_sphere2"/>
+    <child link="R3_inside2"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+</robot>

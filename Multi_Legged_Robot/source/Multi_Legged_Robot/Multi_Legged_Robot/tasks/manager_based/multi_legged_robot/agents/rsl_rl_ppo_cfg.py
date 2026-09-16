@@ -13,7 +13,7 @@ class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 16
     max_iterations = 150
     save_interval = 50
-    experiment_name = "cartpole_direct"
+    experiment_name = "hugo_base"
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=False,
@@ -36,3 +36,12 @@ class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
         desired_kl=0.01,
         max_grad_norm=1.0,
     )
+    
+@configclass
+class PPORunnerCfgCPG(PPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.experiment_name = "hugo_cpg"
+        # D. residual 은 작은 보정에서 시작하는 게 맞다
+        self.policy.init_noise_std = 0.5
+        self.algorithm.desired_kl = 0.005

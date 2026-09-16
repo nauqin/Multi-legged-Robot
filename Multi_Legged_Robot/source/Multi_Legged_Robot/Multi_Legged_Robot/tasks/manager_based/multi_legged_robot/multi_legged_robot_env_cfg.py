@@ -51,9 +51,18 @@ from .random_grid_terrain_cfg import HUGO_RANDOM_GRID_TERRAIN_IMPORTER_CFG
 # Paths and constants
 ##
 
-ROBOT_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/hugo_hexapod_ver2/hugo_hexapod_ver2.usd"
+ROBOT_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/hugo_hexapod_ver3_1/hugo_hexapod_ver3_1.usd"
 
-INITIAL_BODY_HEIGHT = 1.75
+# ver3.1 geometry:
+#   segment 0.33 x 2 + prismatic default 0.03 x 2 + foot 0.02  -> sole 0.74 m below hip
+#   roll splay 0.2 rad                                          -> body center 0.725 m
+NOMINAL_LEG_DROP = 0.74
+ROLL_SPLAY = 0.2
+NOMINAL_BODY_HEIGHT = 0.725
+PRISMATIC_DEFAULT = 0.03
+
+# spawn slightly above nominal so the robot settles instead of being pushed out of the mesh
+INITIAL_BODY_HEIGHT = 0.80
 
 # 200 Hz physics, 50 Hz policy
 SIM_DT = 1.0 / 200.0
@@ -67,13 +76,13 @@ ENV_SPACING = 4.0
 # Height scanner constants
 ##
 
-HEIGHT_SCANNER_OFFSET_POS = (0.20, 0.0, 0.50)
-HEIGHT_SCANNER_SIZE = (2.4, 1.6)
-HEIGHT_SCANNER_RESOLUTION = 0.15
+HEIGHT_SCANNER_OFFSET_POS = (0.10, 0.0, 0.40)
+HEIGHT_SCANNER_SIZE = (1.6, 1.0)
+HEIGHT_SCANNER_RESOLUTION = 0.10
 HEIGHT_SCANNER_MAX_DISTANCE = 5.0
 HEIGHT_SCANNER_UPDATE_PERIOD = SIM_DT * DECIMATION
 
-HEIGHT_SCAN_NOMINAL_HEIGHT = 1.05
+HEIGHT_SCAN_NOMINAL_HEIGHT = NOMINAL_BODY_HEIGHT
 HEIGHT_SCAN_SCALE = 1.0
 
 # TerrainImporter with terrain_type="generator" usually creates the mesh under /World/ground/terrain.
@@ -107,8 +116,60 @@ PRISMATIC_VEL_ROUGH_GAIN = 0.08
 # Base leveling gain.
 # This keeps base_link level in both flat and rough terrain, with stronger pressure on rough terrain
 # because prismatic joints should help the base stay parallel while feet adapt to height differences.
-BASE_LEVEL_FLAT_GAIN = 0.40
+BASE_LEVEL_FLAT_GAIN = 0.80
 BASE_LEVEL_ROUGH_GAIN = 0.80
+
+
+##
+# Actuator specification (ver3.1)
+##
+
+# Reference build: RobStride 04 QDD module (peak 120 N.m, rated 40 N.m, 9:1, 1.42 kg)
+# plus an additional reduction stage per joint.
+#
+#   roll  : 04 + 2:1  -> peak 240 N.m, rated  80 N.m
+#   hip   : 04 + 4:1  -> peak 480 N.m, rated 160 N.m
+#   knee  : 04 + 3:1  -> peak 360 N.m, rated 120 N.m
+#   prism : SMC LEY63 class ball screw, lead 5 mm
+#
+# effort_limit_sim is intentionally set ABOVE the reference peak so that the
+# recorded torque is the torque the gait actually needs, not a clipped value.
+# Model selection is done afterwards by comparing the logged RMS torque with
+# RATED_* below. Clipping here would make the spec-derivation logs meaningless.
+EFFORT_LIMIT_REVOLUTE = 500.0
+EFFORT_LIMIT_PRISMATIC = 1500.0
+
+VELOCITY_LIMIT_ROLL = 5.0
+VELOCITY_LIMIT_HIP = 5.0
+VELOCITY_LIMIT_KNEE = 5.0
+VELOCITY_LIMIT_PRISMATIC = 0.25
+
+# armature = rotor inertia x (reduction ratio)^2
+# rotor inertia is ESTIMATED from module geometry (not from a datasheet).
+# Revisit once the manufacturer provides the rotor inertia.
+ARMATURE_ROLL = 0.42
+ARMATURE_HIP = 1.70
+ARMATURE_KNEE = 0.95
+ARMATURE_PRISMATIC = 60.0
+
+# Kp: sized so that the static load deflection stays small.
+# Kd: critical damping, 2*sqrt(Kp * (armature + link inertia)).
+STIFFNESS_ROLL, DAMPING_ROLL = 2000.0, 120.0
+STIFFNESS_HIP, DAMPING_HIP = 4000.0, 300.0
+STIFFNESS_KNEE, DAMPING_KNEE = 2000.0, 120.0
+STIFFNESS_PRISMATIC, DAMPING_PRISMATIC = 50000.0, 3500.0
+
+# Continuous (thermal) limits of the reference build.
+# These are NOT enforced in simulation. They are the pass/fail lines used when
+# reading the torque logs: if the RMS torque of a joint exceeds its rated value,
+# that joint overheats on the real robot and the actuator must be re-selected.
+RATED_TORQUE_ROLL = 80.0
+RATED_TORQUE_HIP = 160.0
+RATED_TORQUE_KNEE = 120.0
+RATED_FORCE_PRISMATIC = 500.0
+
+# Payload: cobot arm + controller + welding feeder/torch + cabling.
+PAYLOAD_MASS_RANGE = (0.0, 40.0)
 
 
 ##
@@ -123,12 +184,14 @@ NON_FOOT_BODY_NAMES = [
     ".*_sphere1",
     ".*_inside",
     ".*_outside",
-    ".*_sphere2_base",
     ".*_sphere2",
     ".*_inside2",
     ".*_outside2",
 ]
 
+ROLL_JOINT_NAMES = [".*joint1_roll"]
+HIP_PITCH_JOINT_NAMES = [".*joint2_pitch"]
+KNEE_PITCH_JOINT_NAMES = [".*joint3_pitch"]
 REVOLUTE_JOINT_NAMES = [".*joint.*"]
 PRISMATIC_JOINT_NAMES = [".*prismatic.*"]
 ALL_CONTROLLED_JOINT_NAMES = [".*joint.*", ".*prismatic.*"]
@@ -573,28 +636,55 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
         init_state=ArticulationCfg.InitialStateCfg(
             pos=(0.0, 0.0, INITIAL_BODY_HEIGHT),
             joint_pos={
-                ".*joint1_roll": 0.0,
+                # Splay the legs outward so the support polygon is wider than
+                # the 0.6 m body. ver2 kept roll at 0 with scale 0.05, which
+                # made the roll joints effectively unused.
+                "L.*joint1_roll": ROLL_SPLAY,
+                "R.*joint1_roll": -ROLL_SPLAY,
                 ".*joint2_pitch": 0.0,
                 ".*joint3_pitch": 0.0,
-                ".*prismatic1": 0.0,
-                ".*prismatic2": 0.0,
+                # Park the prismatic joints away from the lower limit so they
+                # can absorb terrain in BOTH directions. In ver2 the default
+                # was the hard stop at 0, so any load pinned them there.
+                ".*prismatic1": PRISMATIC_DEFAULT,
+                ".*prismatic2": PRISMATIC_DEFAULT,
             },
             joint_vel={".*": 0.0},
         ),
         actuators={
-            "prismatic": ImplicitActuatorCfg(
-                joint_names_expr=[".*prismatic.*"],
-                stiffness=3000.0,
-                damping=300.0,
-                effort_limit_sim=500.0,
-                velocity_limit_sim=1.0,
+            # Split per joint role: each joint now carries its own reduction
+            # ratio, reflected inertia (armature) and torque envelope.
+            "roll": ImplicitActuatorCfg(
+                joint_names_expr=ROLL_JOINT_NAMES,
+                stiffness=STIFFNESS_ROLL,
+                damping=DAMPING_ROLL,
+                armature=ARMATURE_ROLL,
+                effort_limit_sim=EFFORT_LIMIT_REVOLUTE,
+                velocity_limit_sim=VELOCITY_LIMIT_ROLL,
             ),
-            "revolute": ImplicitActuatorCfg(
-                joint_names_expr=[".*joint.*"],
-                stiffness=2000.0,
-                damping=100.0,
-                effort_limit_sim=200.0,
-                velocity_limit_sim=2.0,
+            "hip_pitch": ImplicitActuatorCfg(
+                joint_names_expr=HIP_PITCH_JOINT_NAMES,
+                stiffness=STIFFNESS_HIP,
+                damping=DAMPING_HIP,
+                armature=ARMATURE_HIP,
+                effort_limit_sim=EFFORT_LIMIT_REVOLUTE,
+                velocity_limit_sim=VELOCITY_LIMIT_HIP,
+            ),
+            "knee_pitch": ImplicitActuatorCfg(
+                joint_names_expr=KNEE_PITCH_JOINT_NAMES,
+                stiffness=STIFFNESS_KNEE,
+                damping=DAMPING_KNEE,
+                armature=ARMATURE_KNEE,
+                effort_limit_sim=EFFORT_LIMIT_REVOLUTE,
+                velocity_limit_sim=VELOCITY_LIMIT_KNEE,
+            ),
+            "prismatic": ImplicitActuatorCfg(
+                joint_names_expr=PRISMATIC_JOINT_NAMES,
+                stiffness=STIFFNESS_PRISMATIC,
+                damping=DAMPING_PRISMATIC,
+                armature=ARMATURE_PRISMATIC,
+                effort_limit_sim=EFFORT_LIMIT_PRISMATIC,
+                velocity_limit_sim=VELOCITY_LIMIT_PRISMATIC,
             ),
         },
     )
@@ -605,7 +695,7 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
         update_period=0.0,
         track_air_time=True,
         force_threshold=1.0,
-        debug_vis=False,
+        debug_vis=True,
     )
 
     body_contact_forces = ContactSensorCfg(
@@ -691,31 +781,36 @@ class ActionsCfg:
     Keep its scale small at first. Increase gradually only after stable behavior appears.
     """
 
+    # scale = how many rad (or m) a policy output of 1.0 corresponds to.
+    # Reachable target = default pose +/- scale.
     roll_pos = mdp.JointPositionActionCfg(
         asset_name="robot",
-        joint_names=[".*joint1_roll"],
-        scale=0.05,
+        joint_names=ROLL_JOINT_NAMES,
+        # 0.05 rad (2.9 deg) in ver2 left the roll joints unusable.
+        scale=0.20,
         use_default_offset=True,
     )
 
     hip_pitch_pos = mdp.JointPositionActionCfg(
         asset_name="robot",
-        joint_names=[".*joint2_pitch"],
-        scale=0.20,
+        joint_names=HIP_PITCH_JOINT_NAMES,
+        # 0.5 m stride on a 0.72 m leg needs about +/-0.35 rad.
+        scale=0.30,
         use_default_offset=True,
     )
 
     knee_pitch_pos = mdp.JointPositionActionCfg(
         asset_name="robot",
-        joint_names=[".*joint3_pitch"],
-        scale=0.15,
+        joint_names=KNEE_PITCH_JOINT_NAMES,
+        scale=0.30,
         use_default_offset=True,
     )
 
     prismatic_pos = mdp.JointPositionActionCfg(
         asset_name="robot",
         joint_names=PRISMATIC_JOINT_NAMES,
-        scale=0.1,
+        # default 0.03 +/- 0.05 -> 0.00 to 0.08 m of the 0.15 m stroke.
+        scale=0.05,
         use_default_offset=True,
     )
 
@@ -851,13 +946,30 @@ class EventCfg:
         },
     )
 
+    # Payload, not manufacturing tolerance.
+    # ver2 used scale (0.85, 1.15), i.e. about +/-6 kg on a 40 kg base, which
+    # does not represent the 40 kg cobot-arm payload this robot is designed for.
     randomize_base_mass = EventTerm(
         func=mdp.randomize_rigid_body_mass,
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names="base_link"),
-            "mass_distribution_params": (0.85, 1.15),
-            "operation": "scale",
+            "mass_distribution_params": PAYLOAD_MASS_RANGE,
+            "operation": "add",
+        },
+    )
+
+    # External disturbance. Present in the mid-generation cfg, dropped later.
+    # Without it the policy is only ever tested against terrain, never against
+    # a push, which matters for a robot carrying a moving arm.
+    push_robot = EventTerm(
+        func=mdp.apply_external_force_torque,
+        mode="interval",
+        interval_range_s=(4.0, 8.0),
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names="base_link"),
+            "force_range": (-40.0, 40.0),
+            "torque_range": (-8.0, 8.0),
         },
     )
 
@@ -966,10 +1078,15 @@ class RewardsCfg:
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=REVOLUTE_JOINT_NAMES)},
     )
 
+    # Revolute only. With the prismatic default at the hard stop (ver2) this
+    # term punished the robot for simply being loaded. The default is now at
+    # 0.03 m, but the prismatic joints are already regulated by the two
+    # terrain-adaptive terms below, so a third limit penalty on them would
+    # suppress the mechanism this project is meant to study.
     joint_pos_limits = RewTerm(
         func=mdp.joint_pos_limits,
         weight=-0.25,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=ALL_CONTROLLED_JOINT_NAMES)},
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=REVOLUTE_JOINT_NAMES)},
     )
 
     terrain_swing_clearance = RewTerm(
@@ -997,6 +1114,23 @@ class RewardsCfg:
         },
     )
 
+    # --- actuator load terms -------------------------------------------
+    # Required for hardware spec derivation. Without a torque cost the policy
+    # has no reason to economise torque, so the logged torque only reflects
+    # whatever the effort limit allows and cannot be used to size an actuator.
+    # Weight is deliberately small: it should shape the gait, not dominate it.
+    joint_torques_l2 = RewTerm(
+        func=mdp.joint_torques_l2,
+        weight=-2.0e-8,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=ALL_CONTROLLED_JOINT_NAMES)},
+    )
+
+    joint_acc_l2 = RewTerm(
+        func=mdp.joint_acc_l2,
+        weight=-1.0e-7,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=ALL_CONTROLLED_JOINT_NAMES)},
+    )
+
     terrain_adaptive_prismatic_velocity = RewTerm(
         func=terrain_adaptive_prismatic_velocity_l2,
         weight=-0.05,
@@ -1020,9 +1154,11 @@ class TerminationsCfg:
 
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
+    # ver2 used 0.70 against a 1.02 m nominal height, i.e. the robot could sag
+    # 30 cm and keep going. Scaled to the ver3.1 nominal height of 0.725 m.
     base_height = DoneTerm(
         func=mdp.root_height_below_minimum,
-        params={"minimum_height": 0.70, "asset_cfg": SceneEntityCfg("robot")},
+        params={"minimum_height": 0.45, "asset_cfg": SceneEntityCfg("robot")},
     )
 
     bad_orientation = DoneTerm(
@@ -1072,7 +1208,7 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
         self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
 
         self.rewards.track_lin_vel_xy.weight = 3.0
-        self.rewards.track_ang_vel_z.weight = 0.0
+        self.rewards.track_ang_vel_z.weight = 1.0
 
         # Air-time is kept weak because too much air-time caused kicking behavior.
         self.rewards.feet_air_time.weight = 0.15
@@ -1100,6 +1236,15 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
         # - weak penalty on rough terrain
         self.rewards.terrain_adaptive_prismatic_deviation.weight = -1.0
         self.rewards.terrain_adaptive_prismatic_velocity.weight = -0.05
+
+        # Actuator load shaping for spec derivation.
+        # If the gait becomes sluggish, lower joint_torques_l2 first.
+        self.rewards.joint_torques_l2.weight = -2.0e-8
+        self.rewards.joint_acc_l2.weight = -1.0e-7
+
+        # Mesh terrain with thousands of envs overflows the default contact
+        # patch buffer, which both spams errors and slows each iteration.
+        self.sim.physx.gpu_max_rigid_patch_count = 2**20
 
         self.viewer.eye = (5.0, 5.0, 4.0)
         self.viewer.lookat = (0.0, 0.0, 0.5)

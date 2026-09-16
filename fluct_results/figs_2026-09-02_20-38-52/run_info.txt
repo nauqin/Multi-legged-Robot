@@ -1,0 +1,8 @@
+실행 시각 : 2026-09-02 20:38:52
+작업 폴더 : /home/sejong/WS/Hugo_Multi/fluct_results
+창 길이   : 12.0s
+warmup    : 2.0s
+대역 경계 : 0.5 Hz
+
+명령:
+analyze_fluct2.py --csv go2_flat.csv --name Go2 flat --robot Go2 --terrain flat --body-height 0.372 --csv go2_bumps30.csv --name Go2 bumps --robot Go2 --terrain bumps30 --body-height 0.372 --csv hugo_flat.csv --name Hugo flat --robot Hugo --terrain flat --body-height 1.05 --csv hugo_bumps30.csv --name Hugo bumps --robot Hugo --terrain bumps30 --body-height 1.05 --outdir figs

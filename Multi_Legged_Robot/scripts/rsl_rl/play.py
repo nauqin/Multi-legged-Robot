@@ -8,6 +8,7 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
+import math
 import sys
 
 from isaaclab.app import AppLauncher
@@ -34,6 +35,12 @@ parser.add_argument(
     help="Use the pre-trained checkpoint from Nucleus.",
 )
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
+parser.add_argument(
+    "--terrain_seed",
+    type=int,
+    default=None,
+    help="Override the terrain generator seed. Use a value different from the training seed for evaluation.",
+)
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -105,6 +112,49 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     agent_cfg: RslRlBaseRunnerCfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
 
+    # ------------------------------------------------------------------
+    # 1 env : 1 patch — terrain grid sizing
+    #
+    # use_terrain_origins=True 이면 TerrainImporter가 env_spacing을 무시하고
+    # env 원점을 sub-terrain 패치 중심으로 잡는다. 따라서 패치 수보다 env가
+    # 많으면 여러 로봇이 같은 좌표에 겹쳐서 스폰된다.
+    # 여기서 패치 수(num_rows x num_cols)를 num_envs 이상으로 키운다.
+    # ------------------------------------------------------------------
+    terrain_cfg = getattr(env_cfg.scene, "terrain", None)
+    terrain_gen_cfg = getattr(terrain_cfg, "terrain_generator", None) if terrain_cfg is not None else None
+
+    if terrain_gen_cfg is not None:
+        num_patch_cols = terrain_gen_cfg.num_cols
+        num_patch_rows = math.ceil(env_cfg.scene.num_envs / num_patch_cols)
+
+        terrain_gen_cfg.num_rows = num_patch_rows
+        terrain_gen_cfg.num_cols = num_patch_cols
+
+        # 캐시된 옛 지형(다른 rows/cols)을 재사용하지 않도록 한다.
+        terrain_gen_cfg.use_cache = False
+
+        # 평가 지형은 학습 지형과 다른 seed 여야 "지형을 외운 정책"이라는
+        # 지적을 피할 수 있다.
+        if args_cli.terrain_seed is not None:
+            terrain_gen_cfg.seed = args_cli.terrain_seed
+
+        # 아래에서 레벨/타입을 직접 지정하므로 초기 레벨 제한은 해제한다.
+        terrain_cfg.max_init_terrain_level = None
+
+        print(
+            f"[INFO] Terrain grid set to {num_patch_rows} x {num_patch_cols} "
+            f"= {num_patch_rows * num_patch_cols} patches for {env_cfg.scene.num_envs} envs "
+            f"(seed={terrain_gen_cfg.seed})."
+        )
+
+        # terrain_levels_vel 커리큘럼이 reset 때 env_origins를 다시 섞어버리므로
+        # 평가 중에는 끈다.
+        if hasattr(env_cfg, "curriculum") and getattr(env_cfg.curriculum, "terrain_levels", None) is not None:
+            env_cfg.curriculum.terrain_levels = None
+            print("[INFO] Disabled terrain_levels curriculum for deterministic placement.")
+    else:
+        print("[WARN] No terrain generator found. Skipping 1 env : 1 patch setup.")
+
     # handle deprecated configurations
     agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, installed_version)
 
@@ -134,6 +184,41 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+
+    # ------------------------------------------------------------------
+    # 1 env : 1 patch — deterministic placement
+    #
+    # env i 는 patch (i // num_cols, i % num_cols) 에 배치된다.
+    # env_origins 는 in-place 로 갱신해야 scene.env_origins 와 같은 텐서를
+    # 계속 가리킨다.
+    # ------------------------------------------------------------------
+    if terrain_gen_cfg is not None:
+        terrain = env.unwrapped.scene.terrain
+        num_envs = env.unwrapped.num_envs
+        patch_origins = terrain.terrain_origins  # (rows, cols, 3)
+
+        if patch_origins is None:
+            raise RuntimeError(
+                "terrain.terrain_origins is None. "
+                "1 env : 1 patch requires terrain_type='generator' with use_terrain_origins=True."
+            )
+
+        num_patch_rows, num_patch_cols = patch_origins.shape[0], patch_origins.shape[1]
+        if num_envs > num_patch_rows * num_patch_cols:
+            raise ValueError(
+                f"num_envs ({num_envs}) exceeds the number of terrain patches "
+                f"({num_patch_rows} x {num_patch_cols} = {num_patch_rows * num_patch_cols})."
+            )
+
+        env_ids = torch.arange(num_envs, device=patch_origins.device)
+        terrain.terrain_levels = (env_ids // num_patch_cols).long()
+        terrain.terrain_types = (env_ids % num_patch_cols).long()
+        terrain.env_origins[:] = patch_origins[terrain.terrain_levels, terrain.terrain_types]
+
+        # 새 원점으로 로봇을 다시 배치한다.
+        env.unwrapped.reset()
+
+        print(f"[INFO] Assigned {num_envs} envs to {num_envs} distinct terrain patches.")
 
     # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv):
