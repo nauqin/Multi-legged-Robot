@@ -41,7 +41,8 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sensors import ContactSensorCfg, ImuCfg, RayCasterCfg, patterns
+from isaaclab.sensors import ContactSensorCfg, PvaCfg, RayCasterCfg, patterns
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg, NewtonShapeCfg
 from isaaclab.utils import configclass
 
 from .random_grid_terrain_cfg import HUGO_RANDOM_GRID_TERRAIN_IMPORTER_CFG
@@ -51,7 +52,7 @@ from .random_grid_terrain_cfg import HUGO_RANDOM_GRID_TERRAIN_IMPORTER_CFG
 # Paths and constants
 ##
 
-ROBOT_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/hugo_hexapod_ver3_1/hugo_hexapod_ver3_1.usd"
+ROBOT_USD_PATH = "/NHNHOME/WORKSPACE/26mss002_C4/source/Multi-legged-Robot/usd files/hugo_hexapod_ver3_1/hugo_hexapod_ver3_1.usd"
 
 # ver3.1 geometry:
 #   segment 0.33 x 2 + prismatic default 0.03 x 2 + foot 0.02  -> sole 0.74 m below hip
@@ -234,12 +235,12 @@ def _height_scan_values(
     sensor = env.scene[sensor_cfg.name]
     asset = env.scene[asset_cfg.name]
 
-    ray_hits_z = sensor.data.ray_hits_w[..., 2]
+    ray_hits_z = sensor.data.ray_hits_w.torch[..., 2]
 
     if hasattr(asset.data, "root_pos_w"):
-        base_z = asset.data.root_pos_w[:, 2].unsqueeze(1)
+        base_z = asset.data.root_pos_w.torch[:, 2].unsqueeze(1)
     else:
-        base_z = asset.data.root_state_w[:, 2].unsqueeze(1)
+        base_z = asset.data.root_state_w.torch[:, 2].unsqueeze(1)
 
     relative_height = ray_hits_z - base_z + nominal_height
     relative_height = torch.nan_to_num(relative_height, nan=0.0, posinf=0.0, neginf=0.0)
@@ -296,7 +297,7 @@ def _nearest_terrain_height_from_scan(
         terrain_z: Tensor with shape (num_envs, num_points).
         nearest_dist_xy: Tensor with shape (num_envs, num_points).
     """
-    ray_hits_w = sensor.data.ray_hits_w
+    ray_hits_w = sensor.data.ray_hits_w.torch
 
     ray_xy = ray_hits_w[..., :2]
     ray_z = ray_hits_w[..., 2]
@@ -354,14 +355,14 @@ def terrain_swing_clearance_band_l2(
     robot = env.scene[asset_cfg.name]
     contact_sensor = env.scene[contact_sensor_cfg.name]
 
-    foot_pos_w = robot.data.body_pos_w[:, asset_cfg.body_ids, :]
+    foot_pos_w = robot.data.body_pos_w.torch[:, asset_cfg.body_ids, :]
     terrain_z, nearest_dist_xy = _nearest_terrain_height_from_scan(height_sensor, foot_pos_w)
 
     foot_z = foot_pos_w[..., 2]
     clearance = foot_z - terrain_z
 
     forces = (
-        contact_sensor.data.net_forces_w_history[:, :, contact_sensor_cfg.body_ids, :]
+        contact_sensor.data.net_forces_w_history.torch[:, :, contact_sensor_cfg.body_ids, :]
         .norm(dim=-1)
         .max(dim=1)[0]
     )
@@ -400,8 +401,8 @@ def terrain_adaptive_prismatic_deviation_l2(
     robot = env.scene[asset_cfg.name]
     _, flat_weight, rough_weight = _terrain_roughness_and_masks(env, sensor_cfg, asset_cfg)
 
-    prismatic_pos = robot.data.joint_pos[:, prismatic_asset_cfg.joint_ids]
-    default_pos = robot.data.default_joint_pos[:, prismatic_asset_cfg.joint_ids]
+    prismatic_pos = robot.data.joint_pos.torch[:, prismatic_asset_cfg.joint_ids]
+    default_pos = robot.data.default_joint_pos.torch[:, prismatic_asset_cfg.joint_ids]
 
     usage = torch.mean((prismatic_pos - default_pos) ** 2, dim=1)
     adaptive_gain = flat_weight * flat_usage_gain + rough_weight * rough_usage_gain
@@ -424,7 +425,7 @@ def terrain_adaptive_prismatic_velocity_l2(
     robot = env.scene[asset_cfg.name]
     _, flat_weight, rough_weight = _terrain_roughness_and_masks(env, sensor_cfg, asset_cfg)
 
-    prismatic_vel = robot.data.joint_vel[:, prismatic_asset_cfg.joint_ids]
+    prismatic_vel = robot.data.joint_vel.torch[:, prismatic_asset_cfg.joint_ids]
     vel_usage = torch.mean(prismatic_vel**2, dim=1)
 
     adaptive_gain = flat_weight * flat_vel_gain + rough_weight * rough_vel_gain
@@ -446,7 +447,7 @@ def feet_air_time_reward(
     contact_sensor = env.scene[sensor_cfg.name]
 
     first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
-    last_air_time = contact_sensor.data.last_air_time[:, sensor_cfg.body_ids]
+    last_air_time = contact_sensor.data.last_air_time.torch[:, sensor_cfg.body_ids]
 
     air_time_reward = torch.clamp(last_air_time - threshold, min=0.0)
     reward = torch.sum(air_time_reward * first_contact.float(), dim=1)
@@ -465,7 +466,7 @@ def feet_contact_force_l2(
 ):
     """Penalty for foot contact force above max_force (impact, not static load)."""
     contact_sensor = env.scene[sensor_cfg.name]
-    forces_w = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]
+    forces_w = contact_sensor.data.net_forces_w.torch[:, sensor_cfg.body_ids, :]
     force_norm = torch.norm(forces_w, dim=-1)
 
     excess_force = torch.clamp(force_norm - max_force, min=0.0)
@@ -481,7 +482,7 @@ def undesired_body_contact(
 ):
     """Penalty when non-foot bodies make contact."""
     contact_sensor = env.scene[sensor_cfg.name]
-    forces_w = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]
+    forces_w = contact_sensor.data.net_forces_w.torch[:, sensor_cfg.body_ids, :]
     force_norm = torch.norm(forces_w, dim=-1)
 
     contacts = force_norm > threshold
@@ -499,7 +500,7 @@ def feet_contact_state(
     contact_sensor = env.scene[sensor_cfg.name]
 
     forces = (
-        contact_sensor.data.net_forces_w_history[:, :, sensor_cfg.body_ids, :]
+        contact_sensor.data.net_forces_w_history.torch[:, :, sensor_cfg.body_ids, :]
         .norm(dim=-1)
         .max(dim=1)[0]
     )
@@ -515,19 +516,19 @@ def feet_contact_state(
 def imu_ang_vel_b(env, sensor_cfg: SceneEntityCfg):
     """IMU angular velocity in body frame."""
     imu = env.scene[sensor_cfg.name]
-    return imu.data.ang_vel_b
+    return imu.data.ang_vel_b.torch
 
 
 def imu_projected_gravity_b(env, sensor_cfg: SceneEntityCfg):
     """Gravity direction projected into body frame from IMU."""
     imu = env.scene[sensor_cfg.name]
-    return imu.data.projected_gravity_b
+    return imu.data.projected_gravity_b.torch
 
 
 def imu_lin_acc_residual_b(env, sensor_cfg: SceneEntityCfg, gravity: float = GRAVITY_MAG):
     """Body-frame dynamic acceleration with gravity component removed."""
     imu = env.scene[sensor_cfg.name]
-    residual_acc_b = imu.data.lin_acc_b + gravity * imu.data.projected_gravity_b
+    residual_acc_b = imu.data.lin_acc_b.torch  # 3.0 PVA: 중력 미포함
     return residual_acc_b / gravity
 
 
@@ -553,21 +554,21 @@ def height_scan(
 def imu_projected_gravity_xy_l2(env, sensor_cfg: SceneEntityCfg):
     """Penalty for roll/pitch tilt using IMU projected gravity."""
     imu = env.scene[sensor_cfg.name]
-    projected_gravity = imu.data.projected_gravity_b
+    projected_gravity = imu.data.projected_gravity_b.torch
     return torch.sum(projected_gravity[:, :2] ** 2, dim=1)
 
 
 def imu_ang_vel_xy_l2(env, sensor_cfg: SceneEntityCfg):
     """Penalty for body roll/pitch angular velocity from IMU."""
     imu = env.scene[sensor_cfg.name]
-    ang_vel_b = imu.data.ang_vel_b
+    ang_vel_b = imu.data.ang_vel_b.torch
     return torch.sum(ang_vel_b[:, :2] ** 2, dim=1)
 
 
 def imu_vertical_dynamic_acc_l2(env, sensor_cfg: SceneEntityCfg, gravity: float = GRAVITY_MAG):
     """Penalty for vertical dynamic acceleration in body frame."""
     imu = env.scene[sensor_cfg.name]
-    residual_acc_b = imu.data.lin_acc_b + gravity * imu.data.projected_gravity_b
+    residual_acc_b = imu.data.lin_acc_b.torch  # 3.0 PVA: 중력 미포함
     return (residual_acc_b[:, 2] / gravity) ** 2
 
 
@@ -579,8 +580,8 @@ def joint_deviation_l2(env, asset_cfg: SceneEntityCfg):
     """Penalty for revolute joints deviating too far from default joint positions."""
     asset = env.scene[asset_cfg.name]
 
-    joint_pos = asset.data.joint_pos[:, asset_cfg.joint_ids]
-    default_joint_pos = asset.data.default_joint_pos[:, asset_cfg.joint_ids]
+    joint_pos = asset.data.joint_pos.torch[:, asset_cfg.joint_ids]
+    default_joint_pos = asset.data.default_joint_pos.torch[:, asset_cfg.joint_ids]
 
     return torch.mean((joint_pos - default_joint_pos) ** 2, dim=1)
 
@@ -683,22 +684,15 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
         debug_vis=False,
     )
 
-    imu = ImuCfg(
+    imu = PvaCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base_link",
         update_period=0.0,
-        history_length=3,
         debug_vis=False,
-        offset=ImuCfg.OffsetCfg(
-            pos=(0.0, 0.0, 0.0),
-            rot=(1.0, 0.0, 0.0, 0.0),
-        ),
-        gravity_bias=(0.0, 0.0, GRAVITY_MAG),
     )
 
     height_scanner = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/base_link",
         update_period=HEIGHT_SCANNER_UPDATE_PERIOD,
-        history_length=1,
         debug_vis=False,
         mesh_prim_paths=HEIGHT_SCANNER_MESH_PRIM_PATHS,
         ray_alignment="yaw",
@@ -709,7 +703,7 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
         max_distance=HEIGHT_SCANNER_MAX_DISTANCE,
         offset=RayCasterCfg.OffsetCfg(
             pos=HEIGHT_SCANNER_OFFSET_POS,
-            rot=(1.0, 0.0, 0.0, 0.0),
+            rot=(0.0, 0.0, 0.0, 1.0),
         ),
     )
 
@@ -1211,7 +1205,16 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
 
         # Mesh terrain with thousands of envs overflows the default contact
         # patch buffer, which both spams errors and slows each iteration.
-        self.sim.physx.gpu_max_rigid_patch_count = 2**20
+        # Isaac Lab 3.0 공식 거친 지형 보행 설정과 동일 (지형 메시를 삼각형 그대로 충돌 계산)
+        self.sim.physics = NewtonCfg(
+            solver_cfg=MJWarpSolverCfg(
+                njmax=1000, nconmax=300, cone="pyramidal", impratio=1.0,
+                integrator="implicitfast", use_mujoco_contacts=False,
+            ),
+            collision_cfg=NewtonCollisionPipelineCfg(max_triangle_pairs=2_500_000),
+            num_substeps=2,
+            default_shape_cfg=NewtonShapeCfg(margin=0.0, ke=160000.0, kd=1100.0),
+        )
 
         # GUI 카메라가 로봇 하나를 따라간다. eye / lookat 은 그 로봇 기준 상대 좌표.
         # 어느 로봇을 따라갈지는 train.py / play.py 가 env 수 확정 후 정한다

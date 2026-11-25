@@ -139,7 +139,7 @@ class CPGAction(ActionTerm):
         # 커맨드에서 역산한 보폭을 저역통과시킨 값
         self._d_step_smooth = torch.zeros(n, 1, device=device)
 
-        self._default_joint_pos = self._asset.data.default_joint_pos.clone()
+        self._default_joint_pos = self._asset.data.default_joint_pos.torch.clone()
 
         # 물리 스텝 dt (정책 주기가 아니라 시뮬레이션 스텝)
         self._physics_dt = float(getattr(env, "physics_dt", env.step_dt / 4.0))

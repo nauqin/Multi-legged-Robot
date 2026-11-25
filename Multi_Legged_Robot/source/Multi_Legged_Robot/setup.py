@@ -25,6 +25,7 @@ INSTALL_REQUIRES = [
 setup(
     name="Multi_Legged_Robot",
     packages=["Multi_Legged_Robot"],
+    entry_points={"isaaclab.tasks": ["Multi_Legged_Robot = Multi_Legged_Robot.tasks"]},
     author=EXTENSION_TOML_DATA["package"]["author"],
     maintainer=EXTENSION_TOML_DATA["package"]["maintainer"],
     url=EXTENSION_TOML_DATA["package"]["repository"],

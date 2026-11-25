@@ -162,12 +162,14 @@ def terrain_levels_vel(env, env_ids, asset_cfg: SceneEntityCfg = SceneEntityCfg(
     제자리를 돌면 distance 가 작아 레벨다운 대상이 된다. 의도한 동작이며,
     track_ang_vel_z 와 함께 회전 도피 전략을 막는 두 번째 장치다.
     """
+    if isinstance(env_ids, slice):
+        env_ids = torch.arange(env.num_envs, device=env.device)
     asset = env.scene[asset_cfg.name]
     terrain = env.scene.terrain
     command = env.command_manager.get_command("base_velocity")
 
     distance = torch.norm(
-        asset.data.root_pos_w[env_ids, :2] - env.scene.env_origins[env_ids, :2], dim=1
+        asset.data.root_pos_w.torch[env_ids, :2] - env.scene.env_origins[env_ids, :2], dim=1
     )
     expected = torch.norm(command[env_ids, :2], dim=1) * env.max_episode_length_s
 
