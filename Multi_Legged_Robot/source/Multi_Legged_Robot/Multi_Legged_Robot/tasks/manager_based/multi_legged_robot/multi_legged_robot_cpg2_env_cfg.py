@@ -28,14 +28,14 @@ v1 (multi_legged_robot_cpg_env_cfg.py) 은 비교용으로 그대로 둔다.
   [D 접촉]     feet_slip                   -0.5     디딘 발 미끄러짐
                feet_stumble                -0.5     턱에 걸림
                undesired_body_contact      -1.0
-               feet_contact_force (>700N)  -0.02
+               feet_contact_force          -0.02    정적 하중 1.5 배(~1170 N) 초과분
   [E 안전]     joint_pos_limits            -1.0     prismatic 포함
                is_terminated               -10.0
   [F 하드웨어] joint_torques_l2            -2e-8    사양 도출용. 건드리지 말 것
                joint_acc_l2                -1e-7
                prismatic_vel (정규화)      -0.1     볼스크류 0.25 m/s
 
-  뺀 항: is_alive, feet_air_time, support_contact_count, joint_deviation_l2,
+  뺀 항: is_alive, feet_air_time, joint_deviation_l2,
          terrain_swing_clearance, terrain_adaptive_prismatic_deviation/velocity
          (마지막 둘은 정규화 prismatic_vel 과 residual 규제로 대체)
 
@@ -279,7 +279,7 @@ class MultiLeggedRobotCPG2EnvCfg(MultiLeggedRobotEnvCfg):
         r.track_ang_vel_z.weight = 1.0
         r.track_ang_vel_z.params["std"] = TRACK_ANG_STD
         # [B] 안정
-        r.terrain_adaptive_base_leveling.weight = -2.0
+        r.base_leveling.weight = -2.0
         r.base_height.weight = -10.0
         r.imu_ang_vel_xy_l2.weight = -0.05
         r.imu_vertical_dynamic_acc_l2.weight = -0.02
@@ -301,8 +301,7 @@ class MultiLeggedRobotCPG2EnvCfg(MultiLeggedRobotEnvCfg):
         r.joint_acc_l2.weight = -1.0e-7
         r.prismatic_vel.weight = -0.1
         # 뺀 항
-        for name in ("is_alive", "feet_air_time", "support_contact_count", "imu_projected_gravity_xy_l2",
-                     "joint_deviation_l2", "terrain_swing_clearance",
+        for name in ("is_alive", "feet_air_time", "joint_deviation_l2", "terrain_swing_clearance",
                      "terrain_adaptive_prismatic_deviation", "terrain_adaptive_prismatic_velocity"):
             setattr(r, name, None)
 

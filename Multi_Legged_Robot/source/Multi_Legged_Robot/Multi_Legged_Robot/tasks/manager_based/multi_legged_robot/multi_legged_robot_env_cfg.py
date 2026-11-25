@@ -13,7 +13,7 @@ This version includes:
 - roll / hip-pitch / knee-pitch / prismatic separated actions
 - bounded terrain swing clearance reward
 - terrain roughness based prismatic-use regulation
-- terrain-adaptive base leveling reward
+- base leveling reward (2026-11: 지형별 gain 이 같아 상수 가중치로 정리)
 - no RGB-D camera code
 
 Design intent:
@@ -113,11 +113,12 @@ PRISMATIC_ROUGH_USAGE_GAIN = 0.12
 PRISMATIC_VEL_FLAT_GAIN = 0.50
 PRISMATIC_VEL_ROUGH_GAIN = 0.08
 
-# Base leveling gain.
-# This keeps base_link level in both flat and rough terrain, with stronger pressure on rough terrain
-# because prismatic joints should help the base stay parallel while feet adapt to height differences.
-BASE_LEVEL_FLAT_GAIN = 0.80
-BASE_LEVEL_ROUGH_GAIN = 0.80
+# Base leveling.
+# 예전에는 BASE_LEVEL_FLAT_GAIN / BASE_LEVEL_ROUGH_GAIN 으로 지형별 세기를 다르게
+# 주려 했지만 두 값이 모두 0.80 이라 flat_w * 0.8 + rough_w * 0.8 = 0.8 (상수) 였다.
+# 즉 지형 적응 효과가 없었으므로 상수를 지우고 가중치에 흡수했다.
+#   이전: weight -1.0 x gain 0.8  ->  지금: weight -0.8   (수치상 동일)
+# 지형 적응형으로 남아 있는 것은 prismatic deviation / velocity 두 항이다.
 
 
 ##
@@ -152,6 +153,12 @@ ARMATURE_HIP = 1.70
 ARMATURE_KNEE = 0.95
 ARMATURE_PRISMATIC = 60.0
 
+# armature 는 추정값이고, 액추에이터 구성(하모닉 + 웜기어 등)이 바뀌면 감속비^2 로
+# 크게 달라진다. 0 으로 두면 관절이 비현실적으로 가볍고 토크 로그가 작게 나오므로
+# 넣되, 학습 시작 때 env 마다 이 배율 범위에서 무작위로 흔들어 값에 덜 민감하게 한다.
+# 끄려면 None.
+ARMATURE_RANDOM_SCALE = (0.5, 1.5)
+
 # Kp: sized so that the static load deflection stays small.
 # Kd: critical damping, 2*sqrt(Kp * (armature + link inertia)).
 STIFFNESS_ROLL, DAMPING_ROLL = 2000.0, 120.0
@@ -170,6 +177,16 @@ RATED_FORCE_PRISMATIC = 500.0
 
 # Payload: cobot arm + controller + welding feeder/torch + cabling.
 PAYLOAD_MASS_RANGE = (0.0, 40.0)
+
+# Foot impact threshold.
+# URDF 질량: base 38 kg + 다리 26.7 kg x 6 = 198.2 kg.
+# tripod (지지 다리 3개) 에서 최대 탑재물일 때 다리 하나의 정적 하중
+#   (198.2 + 40) x 9.81 / 3 = 779 N
+# 예전 기준 700 N 은 이보다 낮아서, 탑재물이 20 kg 을 넘으면 서 있기만 해도
+# 벌점을 받았다. 충격만 잡도록 정적 하중의 1.5 배로 둔다.
+ROBOT_TOTAL_MASS = 198.2
+STATIC_TRIPOD_LOAD = (ROBOT_TOTAL_MASS + PAYLOAD_MASS_RANGE[1]) * GRAVITY_MAG / 3.0
+FEET_FORCE_LIMIT = 1.5 * STATIC_TRIPOD_LOAD   # ~1168 N
 
 
 ##
@@ -414,50 +431,9 @@ def terrain_adaptive_prismatic_velocity_l2(
     return adaptive_gain * vel_usage
 
 
-def terrain_adaptive_base_leveling_l2(
-    env,
-    sensor_cfg: SceneEntityCfg,
-    asset_cfg: SceneEntityCfg,
-    imu_sensor_cfg: SceneEntityCfg,
-    flat_level_gain: float = BASE_LEVEL_FLAT_GAIN,
-    rough_level_gain: float = BASE_LEVEL_ROUGH_GAIN,
-):
-    """Terrain-adaptive base roll/pitch leveling penalty.
-
-    This encourages the base_link to remain parallel/level while the legs adapt.
-    It is applied on both flat and rough terrain, but stronger on rough terrain
-    so prismatic joints are useful for maintaining base attitude.
-    """
-    imu = env.scene[imu_sensor_cfg.name]
-    _, flat_weight, rough_weight = _terrain_roughness_and_masks(env, sensor_cfg, asset_cfg)
-
-    projected_gravity = imu.data.projected_gravity_b
-    level_error = torch.sum(projected_gravity[:, :2] ** 2, dim=1)
-
-    adaptive_gain = flat_weight * flat_level_gain + rough_weight * rough_level_gain
-    return adaptive_gain * level_error
-
-
 ##
 # Contact reward / observation functions
 ##
-
-def feet_support_count(
-    env,
-    sensor_cfg: SceneEntityCfg,
-    threshold: float = 5.0,
-    min_contacts: int = 3,
-):
-    """Reward when at least min_contacts feet are in contact."""
-    contact_sensor = env.scene[sensor_cfg.name]
-    forces_w = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]
-    force_norm = torch.norm(forces_w, dim=-1)
-
-    contacts = force_norm > threshold
-    num_contacts = torch.sum(contacts, dim=1)
-
-    return (num_contacts >= min_contacts).float()
-
 
 def feet_air_time_reward(
     env,
@@ -485,9 +461,9 @@ def feet_air_time_reward(
 def feet_contact_force_l2(
     env,
     sensor_cfg: SceneEntityCfg,
-    max_force: float = 700.0,
+    max_force: float = FEET_FORCE_LIMIT,
 ):
-    """Penalty for excessive foot contact force."""
+    """Penalty for foot contact force above max_force (impact, not static load)."""
     contact_sensor = env.scene[sensor_cfg.name]
     forces_w = contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, :]
     force_norm = torch.norm(forces_w, dim=-1)
@@ -756,7 +732,8 @@ class CommandsCfg:
 
     base_velocity = mdp.UniformVelocityCommandCfg(
         asset_name="robot",
-        resampling_time_range=(8.0, 8.0),
+        # 고정 주기면 정책이 "몇 초마다 바뀐다" 를 외운다 (v1 문제 3). 무작위로.
+        resampling_time_range=(5.0, 10.0),
         rel_standing_envs=0.0,
         rel_heading_envs=0.0,
         heading_command=False,
@@ -946,6 +923,18 @@ class EventCfg:
         },
     )
 
+    # armature 추정 오차 대비. 학습 시작 때 한 번 env 마다 배율을 정한다.
+    randomize_armature = EventTerm(
+        func=mdp.randomize_joint_parameters,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=ALL_CONTROLLED_JOINT_NAMES),
+            "armature_distribution_params": ARMATURE_RANDOM_SCALE,
+            "operation": "scale",
+            "distribution": "uniform",
+        },
+    )
+
     # Payload, not manufacturing tolerance.
     # ver2 used scale (0.85, 1.15), i.e. about +/-6 kg on a 40 kg base, which
     # does not represent the 40 kg cobot-arm payload this robot is designed for.
@@ -1009,22 +998,12 @@ class RewardsCfg:
         },
     )
 
-    support_contact_count = RewTerm(
-        func=feet_support_count,
-        weight=0.0,
-        params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=FOOT_BODY_NAMES),
-            "threshold": 5.0,
-            "min_contacts": 3,
-        },
-    )
-
     feet_contact_force_l2 = RewTerm(
         func=feet_contact_force_l2,
         weight=-0.015,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=FOOT_BODY_NAMES),
-            "max_force": 700.0,
+            "max_force": FEET_FORCE_LIMIT,
         },
     )
 
@@ -1037,23 +1016,13 @@ class RewardsCfg:
         },
     )
 
-    # Kept for logging/comparison, but disabled in __post_init__ to avoid duplicating base leveling.
-    imu_projected_gravity_xy_l2 = RewTerm(
+    # 몸통 수평: gx^2 + gy^2 = sin^2(몸통이 수직에서 기운 각).
+    # 예전 terrain_adaptive_base_leveling (gain 0.8 고정) 과 imu_projected_gravity_xy_l2
+    # (가중치 0) 두 항을 이 하나로 합쳤다.
+    base_leveling = RewTerm(
         func=imu_projected_gravity_xy_l2,
-        weight=0.0,
+        weight=-0.8,
         params={"sensor_cfg": SceneEntityCfg("imu")},
-    )
-
-    terrain_adaptive_base_leveling = RewTerm(
-        func=terrain_adaptive_base_leveling_l2,
-        weight=-1.0,
-        params={
-            "sensor_cfg": SceneEntityCfg("height_scanner"),
-            "asset_cfg": SceneEntityCfg("robot"),
-            "imu_sensor_cfg": SceneEntityCfg("imu"),
-            "flat_level_gain": BASE_LEVEL_FLAT_GAIN,
-            "rough_level_gain": BASE_LEVEL_ROUGH_GAIN,
-        },
     )
 
     imu_ang_vel_xy_l2 = RewTerm(
@@ -1212,13 +1181,11 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
 
         # Air-time is kept weak because too much air-time caused kicking behavior.
         self.rewards.feet_air_time.weight = 0.15
-        self.rewards.support_contact_count.weight = 0.0
         self.rewards.feet_contact_force_l2.weight = -0.015
         self.rewards.undesired_body_contact.weight = -1.0
 
-        # Replaced by terrain_adaptive_base_leveling.
-        self.rewards.imu_projected_gravity_xy_l2.weight = 0.0
-        self.rewards.terrain_adaptive_base_leveling.weight = -1.0
+        # 이전 terrain_adaptive_base_leveling (-1.0 x gain 0.8) 과 수치상 같다.
+        self.rewards.base_leveling.weight = -0.8
 
         self.rewards.imu_ang_vel_xy_l2.weight = -0.07
         self.rewards.imu_vertical_dynamic_acc_l2.weight = -0.02
@@ -1246,5 +1213,15 @@ class MultiLeggedRobotEnvCfg(ManagerBasedRLEnvCfg):
         # patch buffer, which both spams errors and slows each iteration.
         self.sim.physx.gpu_max_rigid_patch_count = 2**20
 
-        self.viewer.eye = (5.0, 5.0, 4.0)
-        self.viewer.lookat = (0.0, 0.0, 0.5)
+        # GUI 카메라가 로봇 하나를 따라간다. eye / lookat 은 그 로봇 기준 상대 좌표.
+        # 어느 로봇을 따라갈지는 train.py / play.py 가 env 수 확정 후 정한다
+        # (HUGO_VIEW_ENV=번호 로 고정, 없으면 무작위).
+        self.viewer.origin_type = "asset_root"
+        self.viewer.asset_name = "robot"
+        self.viewer.env_index = 0
+        self.viewer.eye = (3.0, 3.0, 2.0)
+        self.viewer.lookat = (0.0, 0.0, 0.0)
+
+        # armature 무작위화를 끄려면 ARMATURE_RANDOM_SCALE = None
+        if ARMATURE_RANDOM_SCALE is None:
+            self.events.randomize_armature = None

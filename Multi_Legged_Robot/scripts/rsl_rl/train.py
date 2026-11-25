@@ -117,6 +117,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # override configurations with non-hydra CLI arguments
     agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
+
+    # GUI 카메라가 로봇 하나를 따라가게 한다 (env cfg 의 viewer.origin_type="asset_root").
+    # HUGO_VIEW_ENV=번호 로 고정, 없으면 무작위. env 수가 확정된 뒤라야 범위를 넘지 않는다.
+    if getattr(getattr(env_cfg, "viewer", None), "origin_type", "world") == "asset_root":
+        import random
+
+        _view = os.environ.get("HUGO_VIEW_ENV")
+        _n = env_cfg.scene.num_envs
+        env_cfg.viewer.env_index = (int(_view) % _n) if _view is not None else random.randrange(_n)
+        print(f"[INFO] Viewer follows env {env_cfg.viewer.env_index} / {_n}")
     agent_cfg.max_iterations = (
         args_cli.max_iterations if args_cli.max_iterations is not None else agent_cfg.max_iterations
     )

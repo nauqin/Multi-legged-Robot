@@ -314,7 +314,6 @@ class MultiLeggedRobotCPGEnvCfg(MultiLeggedRobotEnvCfg):
         # ---------------------------------------------------------------
         # CPG 가 유각/입각 주기를 구조적으로 보장하므로 불필요하다.
         self.rewards.feet_air_time.weight = 0.0
-        self.rewards.support_contact_count.weight = 0.0
 
         # ---------------------------------------------------------------
         # 3. 속도 추종 / 자세
@@ -328,7 +327,9 @@ class MultiLeggedRobotCPGEnvCfg(MultiLeggedRobotEnvCfg):
         self.rewards.track_ang_vel_z.params["std"] = TRACK_ANG_STD
 
         # 몸통 수평. prismatic 레벨링의 목적 함수다. 강하게 유지.
-        self.rewards.terrain_adaptive_base_leveling.weight = -1.0
+        # (2026-11) 이름 변경: terrain_adaptive_base_leveling -> base_leveling.
+        # 예전 값 -1.0 x gain 0.8 과 같은 -0.8.
+        self.rewards.base_leveling.weight = -0.8
 
         # ---------------------------------------------------------------
         # 4. CPG 궤적과 충돌하는 항 -> 낮춘다
