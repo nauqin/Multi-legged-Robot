@@ -162,10 +162,13 @@ def terrain_levels_cmd(env, env_ids, asset_cfg: SceneEntityCfg = SceneEntityCfg(
     회전 명령이 있으면 실제 경로가 휘어 직선거리가 줄어드므로 v1 (0.8/0.5) 보다
     기준을 낮췄다 (0.6/0.3).
     """
+    # 첫 리셋 때 env_ids 가 slice 로 들어온다 (v1 커리큘럼과 같은 처리)
+    if isinstance(env_ids, slice):
+        env_ids = torch.arange(env.num_envs, device=env.device)
     asset = env.scene[asset_cfg.name]
     terrain = env.scene.terrain
     command = env.command_manager.get_command("base_velocity")
-    distance = torch.norm(asset.data.root_pos_w[env_ids, :2] - env.scene.env_origins[env_ids, :2], dim=1)
+    distance = torch.norm(asset.data.root_pos_w.torch[env_ids, :2] - env.scene.env_origins[env_ids, :2], dim=1)
     expected = torch.norm(command[env_ids, :2], dim=1) * env.max_episode_length_s
     half_tile = terrain.cfg.terrain_generator.size[0] / 2
     up_distance = torch.clamp(expected * CURRICULUM_UP_RATIO, max=half_tile)

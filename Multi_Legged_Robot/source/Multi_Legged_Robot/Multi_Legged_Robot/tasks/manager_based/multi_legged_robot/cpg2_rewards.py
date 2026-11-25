@@ -14,7 +14,7 @@ from isaaclab.managers import SceneEntityCfg
 def _terrain_z_under_base(env, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
     """높이 스캐너 레이 히트 z 의 중앙값 (몸통 아래 지면 높이) (N,)."""
     sensor = env.scene[sensor_cfg.name]
-    z = sensor.data.ray_hits_w[..., 2]
+    z = sensor.data.ray_hits_w.torch[..., 2]
     z = torch.where(torch.isfinite(z), z, torch.full_like(z, float("nan")))
     med = torch.nanmedian(z, dim=1).values
     return torch.nan_to_num(med, nan=0.0)
@@ -25,7 +25,7 @@ def base_height_terrain_l2(env, target_height: float, sensor_cfg: SceneEntityCfg
                            max_err: float = 0.20) -> torch.Tensor:
     """지면 기준 몸통 높이 오차^2.  계단 / 경사에서도 지면을 따라간다."""
     asset = env.scene[asset_cfg.name]
-    h = asset.data.root_pos_w[:, 2] - _terrain_z_under_base(env, sensor_cfg)
+    h = asset.data.root_pos_w.torch[:, 2] - _terrain_z_under_base(env, sensor_cfg)
     err = (h - target_height).clamp(-max_err, max_err)
     return err * err
 
@@ -38,7 +38,7 @@ def base_height_terrain_below(env, minimum_height: float, sensor_cfg: SceneEntit
     (inverted pyramid) 에서 멀쩡히 걷는데도 종료된다.
     """
     asset = env.scene[asset_cfg.name]
-    h = asset.data.root_pos_w[:, 2] - _terrain_z_under_base(env, sensor_cfg)
+    h = asset.data.root_pos_w.torch[:, 2] - _terrain_z_under_base(env, sensor_cfg)
     return h < minimum_height
 
 
@@ -51,7 +51,7 @@ def knee_extension_l2(env, asset_cfg: SceneEntityCfg, min_bend: float = 0.35,
     이 항이 0 이다. 무릎을 펴서 버티는 해만 막는다.
     """
     asset = env.scene[asset_cfg.name]
-    bend = knee_sign * asset.data.joint_pos[:, asset_cfg.joint_ids]
+    bend = knee_sign * asset.data.joint_pos.torch[:, asset_cfg.joint_ids]
     deficit = torch.clamp(min_bend - bend, min=0.0)
     return torch.mean(deficit * deficit, dim=1)
 
@@ -60,17 +60,17 @@ def feet_slip_l2(env, sensor_cfg: SceneEntityCfg, asset_cfg: SceneEntityCfg,
                  threshold: float = 1.0) -> torch.Tensor:
     """디딘 발의 수평 속도^2 합.  CPG 입각기는 등속 궤적이라 0 이 이상적이다."""
     contact = env.scene[sensor_cfg.name]
-    forces = contact.data.net_forces_w_history[:, :, sensor_cfg.body_ids, :].norm(dim=-1).max(dim=1)[0]
+    forces = contact.data.net_forces_w_history.torch[:, :, sensor_cfg.body_ids, :].norm(dim=-1).max(dim=1)[0]
     in_contact = (forces > threshold).float()
     asset = env.scene[asset_cfg.name]
-    v = asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :2]
+    v = asset.data.body_lin_vel_w.torch[:, asset_cfg.body_ids, :2]
     return torch.sum(torch.sum(v * v, dim=-1) * in_contact, dim=1)
 
 
 def feet_stumble(env, sensor_cfg: SceneEntityCfg, ratio: float = 3.0) -> torch.Tensor:
     """발이 수직보다 수평으로 크게 밀리면 (턱에 걸림) 1."""
     contact = env.scene[sensor_cfg.name]
-    f = contact.data.net_forces_w[:, sensor_cfg.body_ids, :]
+    f = contact.data.net_forces_w.torch[:, sensor_cfg.body_ids, :]
     fxy = torch.norm(f[..., :2], dim=-1)
     fz = torch.abs(f[..., 2])
     return torch.any((fxy > ratio * fz) & (fxy > 20.0), dim=1).float()
@@ -79,5 +79,5 @@ def feet_stumble(env, sensor_cfg: SceneEntityCfg, ratio: float = 3.0) -> torch.T
 def joint_vel_norm_l2(env, asset_cfg: SceneEntityCfg, vel_limit: float) -> torch.Tensor:
     """속도 한계로 정규화한 관절 속도^2 평균.  (prismatic 볼스크류 0.25 m/s 용)"""
     asset = env.scene[asset_cfg.name]
-    v = asset.data.joint_vel[:, asset_cfg.joint_ids] / vel_limit
+    v = asset.data.joint_vel.torch[:, asset_cfg.joint_ids] / vel_limit
     return torch.mean(v * v, dim=1)

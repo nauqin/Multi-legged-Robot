@@ -85,7 +85,7 @@ class CPGIKAction(ActionTerm):
         self._cmd = torch.zeros(n, 3, device=device)
 
         self._physics_dt = float(getattr(env, "physics_dt", env.step_dt / 4.0))
-        self._targets = self._asset.data.default_joint_pos.clone()
+        self._targets = self._asset.data.default_joint_pos.torch.clone()
 
         print(f"[CPG-IK] q_nom (roll, hip, pr1, knee, pr2) = "
               f"{[round(v, 3) for v in q_nom[0].tolist()]}, caps {caps.tolist()}, "
@@ -140,7 +140,7 @@ class CPGIKAction(ActionTerm):
     def apply_actions(self):
         """물리 스텝 (200 Hz)."""
         targets = self._targets
-        targets[:] = self._asset.data.default_joint_pos
+        targets[:] = self._asset.data.default_joint_pos.torch
         if self.cfg.enable_cpg:
             feet = self._cpg.step(self._physics_dt, self._cmd)
             self._q_ik, self._ik_err = self._ik.solve(feet, self._q_ik, iters=self.cfg.ik_iters)
@@ -184,7 +184,7 @@ class CPGIKAction(ActionTerm):
             sensor = self._env.scene[self.cfg.roughness_sensor_name]
         except KeyError:
             return torch.zeros(self.num_envs, device=self.device)
-        hits = sensor.data.ray_hits_w
+        hits = sensor.data.ray_hits_w.torch
         valid = torch.isfinite(hits).all(dim=-1)                          # (N, R)
         vf = valid.float()
         cnt = vf.sum(dim=1, keepdim=True).clamp_min(1.0)
