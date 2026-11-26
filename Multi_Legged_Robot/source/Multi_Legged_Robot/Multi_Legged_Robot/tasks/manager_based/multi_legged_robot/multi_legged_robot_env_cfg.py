@@ -705,6 +705,10 @@ class MultiLeggedRobotSceneCfg(InteractiveSceneCfg):
             pos=HEIGHT_SCANNER_OFFSET_POS,
             rot=(0.0, 0.0, 0.0, 1.0),
         ),
+        # Newton 백엔드는 mesh_prim_paths 를 무시하고, 기본값(False)이면 자기 env 의 물체(로봇 몸통·다리)에도
+        # 광선이 맞는다. 그러면 평지에서도 가운데 블록이 +0.8 로 찍히고 거칠기가 0.36 으로 나와
+        # gait 가 항상 험지로 판정된다. 지형(전역 world)만 맞도록 한다 (PhysX 2.x 의 동작과 같음).
+        global_world_only=True,
     )
 
     dome_light = AssetBaseCfg(
