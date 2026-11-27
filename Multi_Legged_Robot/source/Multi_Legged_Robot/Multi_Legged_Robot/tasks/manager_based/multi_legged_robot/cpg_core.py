@@ -567,10 +567,12 @@ class GaitSelector:
         up_t = p.up_tripod + j + torch.where(cur >= 2, -p.hysteresis, p.hysteresis)
         g = (speed > up_r).long() + (speed > up_t).long()
         # 거친 지형이면 한 단계 낮춘다 (그 gait 상한의 90% 안일 때만).
-        # 이미 낮은 gait 에 있으면 90% 까지 머물고, 새로 낮추려면 2h 만큼 더 느려야 한다.
+        # 이미 낮은 gait 에 있으면 90% 까지 머물고, 새로 낮추려면 h 만큼 더 느려야 한다.
         # 이 여유가 없으면 낮추는 기준과 올리는 기준이 같은 속도가 되어 그 근처에서 오간다.
+        # (여유를 2h 로 하면 낮출 수 있는 속도 구간이 거의 사라져 험지 규칙이 죽는다.)
+        #   험지에서: wave 는 0.11 미만에서 들어가 0.13 까지, ripple 은 0.20 미만에서 들어가 0.22 까지
         lower = (g - 1).clamp(min=0)
-        margin = torch.where(cur <= lower, torch.zeros_like(speed), torch.full_like(speed, 2.0 * p.hysteresis))
+        margin = torch.where(cur <= lower, torch.zeros_like(speed), torch.full_like(speed, p.hysteresis))
         can_lower = speed < 0.9 * self.cap[lower] - margin
         g = torch.where(is_rough & can_lower & (g > 0), lower, g)
         return g
