@@ -51,7 +51,7 @@ from .random_grid_terrain_cfg import HUGO_RANDOM_GRID_TERRAIN_IMPORTER_CFG
 # Paths and constants
 ##
 
-ROBOT_USD_PATH = "/home/sejong/WS/Hugo_Multi/usd files/hugo_hexapod_ver3_1/hugo_hexapod_ver3_1.usd"
+ROBOT_USD_PATH = "/home/ubin/Multi-legged-Robot/usd files/hugo_hexapod_ver3_1/hugo_hexapod_ver3_1.usd"
 
 # ver3.1 geometry:
 #   segment 0.33 x 2 + prismatic default 0.03 x 2 + foot 0.02  -> sole 0.74 m below hip
@@ -212,6 +212,16 @@ KNEE_PITCH_JOINT_NAMES = [".*joint3_pitch"]
 REVOLUTE_JOINT_NAMES = [".*joint.*"]
 PRISMATIC_JOINT_NAMES = [".*prismatic.*"]
 ALL_CONTROLLED_JOINT_NAMES = [".*joint.*", ".*prismatic.*"]
+
+# 정책 관측(joint_pos, joint_vel)에 쓰는 관절 순서. 다리별로 묶은 순서로 고정한다.
+# 학습(Isaac Lab 3.0 / Newton)은 관절을 다리별(L1 roll, pitch2, prismatic1, pitch3, prismatic2, L2 ...)로
+# 나열하고, PhysX(2.x)는 종류별(roll 6개, pitch2 6개, ...)로 나열한다. 순서를 명시하지 않으면
+# 같은 체크포인트가 엔진에 따라 뒤섞인 관절 관측을 받는다.
+OBS_JOINT_NAMES_PER_LEG = [
+    f"{leg}_{joint}"
+    for leg in ("L1", "L2", "L3", "R1", "R2", "R3")
+    for joint in ("joint1_roll", "joint2_pitch", "prismatic1", "joint3_pitch", "prismatic2")
+]
 
 
 ##
@@ -856,12 +866,16 @@ class ObservationsCfg:
         # Include both revolute and prismatic joints because prismatic actions are now enabled.
         joint_pos = ObsTerm(
             func=mdp.joint_pos_rel,
-            params={"asset_cfg": SceneEntityCfg("robot", joint_names=ALL_CONTROLLED_JOINT_NAMES)},
+            params={
+                "asset_cfg": SceneEntityCfg("robot", joint_names=OBS_JOINT_NAMES_PER_LEG, preserve_order=True)
+            },
         )
 
         joint_vel = ObsTerm(
             func=mdp.joint_vel_rel,
-            params={"asset_cfg": SceneEntityCfg("robot", joint_names=ALL_CONTROLLED_JOINT_NAMES)},
+            params={
+                "asset_cfg": SceneEntityCfg("robot", joint_names=OBS_JOINT_NAMES_PER_LEG, preserve_order=True)
+            },
         )
 
         actions = ObsTerm(func=mdp.last_action)

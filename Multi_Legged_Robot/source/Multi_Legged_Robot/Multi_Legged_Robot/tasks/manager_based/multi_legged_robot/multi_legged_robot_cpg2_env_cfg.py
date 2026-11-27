@@ -342,6 +342,16 @@ class MultiLeggedRobotCPG2EnvCfg_PLAY(MultiLeggedRobotCPG2EnvCfg):
         gen.difficulty_range = (PLAY_DIFFICULTY, PLAY_DIFFICULTY)
         gen.use_cache = False
         self.events.push_robot = None
+        # 명령 속도(초록)와 실제 속도(파랑) 화살표를 로봇 위에 표시
+        self.commands.base_velocity.debug_vis = True
+        # HUGO_PLAY_VX=0.3 처럼 주면 모든 env 가 그 속도로 직진만 한다 (횡이동, 회전, 정지 없음)
+        if os.environ.get("HUGO_PLAY_VX"):
+            vx = float(os.environ["HUGO_PLAY_VX"])
+            c = self.commands.base_velocity
+            c.ranges.lin_vel_x = (vx, vx)
+            c.ranges.lin_vel_y = (0.0, 0.0)
+            c.ranges.ang_vel_z = (0.0, 0.0)
+            c.rel_standing_envs = 0.0
 
 
 @configclass

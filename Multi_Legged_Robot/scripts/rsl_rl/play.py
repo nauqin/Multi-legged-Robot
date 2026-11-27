@@ -135,7 +135,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     if terrain_gen_cfg is not None:
         num_patch_cols = terrain_gen_cfg.num_cols
-        num_patch_rows = math.ceil(env_cfg.scene.num_envs / num_patch_cols)
+        # 앞뒤로 빈 타일 줄을 하나씩 더 깐다. 타일 바깥 테두리 바닥(큰 삼각형)에서는 PhysX 발 접촉이
+        # 끊겼다 붙었다 해서 걸음이 흐트러지므로, 로봇이 에피소드 안에 테두리로 나가지 않게 한다.
+        PLAY_MARGIN_ROWS = 1
+        num_patch_rows = math.ceil(env_cfg.scene.num_envs / num_patch_cols) + 2 * PLAY_MARGIN_ROWS
 
         terrain_gen_cfg.num_rows = num_patch_rows
         terrain_gen_cfg.num_cols = num_patch_cols
@@ -214,14 +217,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             )
 
         num_patch_rows, num_patch_cols = patch_origins.shape[0], patch_origins.shape[1]
-        if num_envs > num_patch_rows * num_patch_cols:
+        if num_envs > (num_patch_rows - 2 * PLAY_MARGIN_ROWS) * num_patch_cols:
             raise ValueError(
                 f"num_envs ({num_envs}) exceeds the number of terrain patches "
                 f"({num_patch_rows} x {num_patch_cols} = {num_patch_rows * num_patch_cols})."
             )
 
         env_ids = torch.arange(num_envs, device=patch_origins.device)
-        terrain.terrain_levels = (env_ids // num_patch_cols).long()
+        terrain.terrain_levels = (env_ids // num_patch_cols + PLAY_MARGIN_ROWS).long()
         terrain.terrain_types = (env_ids % num_patch_cols).long()
         terrain.env_origins[:] = patch_origins[terrain.terrain_levels, terrain.terrain_types]
 
