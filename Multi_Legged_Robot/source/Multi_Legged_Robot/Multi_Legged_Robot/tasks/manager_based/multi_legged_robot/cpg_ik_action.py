@@ -83,6 +83,7 @@ class CPGIKAction(ActionTerm):
         self._first = torch.ones(n, dtype=torch.bool, device=device)
         self._rough = torch.zeros(n, device=device)
         self._cmd = torch.zeros(n, 3, device=device)
+        self._cmd_sel_f = torch.zeros(n, 3, device=device)   # 걸음새 선택용 (줄이기 전 명령, 저역통과)
 
         self._physics_dt = float(getattr(env, "physics_dt", env.step_dt / 4.0))
         self._targets = self._asset.data.default_joint_pos.torch.clone()
@@ -115,6 +116,12 @@ class CPGIKAction(ActionTerm):
         self._processed_actions[:] = actions * self._residual_scale
 
         self._cmd[:] = self._read_command()
+        # 걸음새 선택은 줄이기 전 명령으로 한다. 줄인 명령은 지금 걸음새의 최대 속도를
+        # 넘지 못하므로, 그걸로 고르면 더 빠른 걸음새로 올라갈 근거가 약해진다.
+        raw = self._read_unclipped_command()
+        a = self._env.step_dt / (self.cfg.gait.cmd_tau + self._env.step_dt)
+        self._cmd_sel_f += a * (raw - self._cmd_sel_f)
+        self._cmd_sel_f[self._first] = raw[self._first]      # 리셋 직후는 필터 없이
         self._rough[:] = self._read_roughness()
 
         # ---- 걸음새 결정 ---------------------------------------------------
@@ -123,9 +130,8 @@ class CPGIKAction(ActionTerm):
             g = torch.full_like(cur, self._fixed_gait)
             imm = self._first.clone()
         else:
-            # 리셋 직후 첫 결정은 필터 전 명령으로 바로 정한다
-            speed = torch.norm(self._cpg.leg_demand(
-                torch.where(self._first[:, None], self._cmd, self._cpg.cmd_f)), dim=-1).amax(dim=1)
+            # 리셋 직후 첫 결정은 필터 전 명령으로 바로 정한다 (_cmd_sel_f 를 위에서 맞춰 둠)
+            speed = torch.norm(self._cpg.leg_demand(self._cmd_sel_f), dim=-1).amax(dim=1)
             g, imm = self._selector.step(self._env.step_dt, speed, self._rough, cur, self._first)
         override = self._read_gait_override()
         if override is not None:
@@ -158,6 +164,7 @@ class CPGIKAction(ActionTerm):
         self._raw_actions[ids] = 0.0
         self._processed_actions[ids] = 0.0
         self._first[ids] = True
+        self._cmd_sel_f[ids] = 0.0
 
     # ------------------------------------------------------------------
     def _read_command(self) -> torch.Tensor:
@@ -166,6 +173,19 @@ class CPGIKAction(ActionTerm):
         except Exception:
             return torch.zeros(self.num_envs, 3, device=self.device)
         return cmd
+
+    def _read_unclipped_command(self) -> torch.Tensor:
+        """걸음새 속도로 줄이기 전 명령. 명령 항이 따로 두지 않으면 명령 그대로."""
+        try:
+            term = self._env.command_manager.get_term(self.cfg.command_name)
+        except Exception:  # noqa: BLE001
+            return self._cmd
+        raw = getattr(term, "unclipped_command", None)
+        return self._cmd if raw is None else raw[:, :3]
+
+    def command_scale(self, cmd: torch.Tensor) -> torch.Tensor:
+        """명령 항이 부른다: 지금 걸음새가 낼 수 있는 속도 안으로 줄이는 배율 (N,)."""
+        return self._cpg.command_scale(cmd[:, :3])
 
     def _read_gait_override(self):
         if not self.cfg.allow_command_gait_override:

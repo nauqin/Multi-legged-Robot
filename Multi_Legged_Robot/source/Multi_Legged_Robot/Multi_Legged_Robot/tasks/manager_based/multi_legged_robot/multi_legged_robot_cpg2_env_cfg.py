@@ -74,7 +74,7 @@ from .cpg2_rewards import (
 )
 from .cpg_core import HugoPostureCfg, build_hugo
 from .cpg_ik_action import CPGIKActionCfg, cpg_ik_gait_state, cpg_ik_oscillator_state
-from .demo_command import ScriptedVelocityCommandCfg
+from .demo_command import GaitLimitedVelocityCommandCfg, ScriptedVelocityCommandCfg
 from .multi_legged_robot_env_cfg import (
     ALL_CONTROLLED_JOINT_NAMES,
     FOOT_BODY_NAMES,
@@ -114,6 +114,8 @@ CMD_LIN_VEL_Y = (-0.15, 0.15)
 CMD_ANG_VEL_Z = (-0.35, 0.35)
 CMD_RESAMPLING_S = (4.0, 8.0)
 CMD_STANDING_RATIO = 0.05
+# 명령을 지금 걸음새의 최대 속도 안으로 줄인다 (HUGO_CMD_LIMIT=0 이면 끔: 이전 체크포인트 비교용)
+CMD_LIMIT_TO_GAIT = os.environ.get("HUGO_CMD_LIMIT", "1") != "0"
 
 TRACK_LIN_STD = math.sqrt(0.02)
 TRACK_ANG_STD = math.sqrt(0.05)
@@ -314,6 +316,18 @@ class MultiLeggedRobotCPG2EnvCfg(MultiLeggedRobotEnvCfg):
             params={"minimum_height": 0.40, "sensor_cfg": SceneEntityCfg("height_scanner")})
 
         # ---- 4. 명령 (전방향) --------------------------------------------
+        # 명령을 지금 걸음새가 낼 수 있는 속도 안으로 줄이는 항으로 바꾼다 (범위 등은 그대로)
+        old = self.commands.base_velocity
+        self.commands.base_velocity = GaitLimitedVelocityCommandCfg(
+            asset_name=old.asset_name,
+            resampling_time_range=old.resampling_time_range,
+            rel_standing_envs=old.rel_standing_envs,
+            rel_heading_envs=old.rel_heading_envs,
+            heading_command=old.heading_command,
+            debug_vis=old.debug_vis,
+            ranges=old.ranges,
+            limit_to_gait=CMD_LIMIT_TO_GAIT,
+        )
         c = self.commands.base_velocity
         c.ranges.lin_vel_x = CMD_LIN_VEL_X
         c.ranges.lin_vel_y = CMD_LIN_VEL_Y

@@ -214,6 +214,16 @@ REVOLUTE_JOINT_NAMES = [".*joint.*"]
 PRISMATIC_JOINT_NAMES = [".*prismatic.*"]
 ALL_CONTROLLED_JOINT_NAMES = [".*joint.*", ".*prismatic.*"]
 
+# 관측 전용: 이름을 하나씩 적은 목록 + preserve_order=True.
+# 정규식으로 고르면 관절/발 순서가 물리엔진의 내부 순서를 따른다. Newton 은 다리별
+# (L1 의 5 관절, L2 의 5 관절, ...), PhysX 는 종류별 (roll 6, pitch 6, ...) 이라 같은
+# 체크포인트가 엔진마다 다른 순서의 값을 받는다. 아래 순서는 학습에 쓴 Newton 순서와
+# 같으므로 기존 체크포인트와 호환된다. (보상 항은 합/평균이라 순서와 무관 -> 정규식 유지)
+OBS_LEG_ORDER = ("L1", "L2", "L3", "R1", "R2", "R3")
+OBS_JOINT_SUFFIXES = ("joint1_roll", "joint2_pitch", "prismatic1", "joint3_pitch", "prismatic2")
+OBS_JOINT_NAMES = [f"{leg}_{suffix}" for leg in OBS_LEG_ORDER for suffix in OBS_JOINT_SUFFIXES]
+OBS_FOOT_BODY_NAMES = [f"{leg}_feet" for leg in OBS_LEG_ORDER]
+
 
 ##
 # Height scan / terrain helper functions
@@ -841,7 +851,7 @@ class ObservationsCfg:
         feet_contact = ObsTerm(
             func=feet_contact_state,
             params={
-                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=FOOT_BODY_NAMES),
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=OBS_FOOT_BODY_NAMES, preserve_order=True),
                 "threshold": 1.0,
             },
         )
@@ -854,12 +864,12 @@ class ObservationsCfg:
         # Include both revolute and prismatic joints because prismatic actions are now enabled.
         joint_pos = ObsTerm(
             func=mdp.joint_pos_rel,
-            params={"asset_cfg": SceneEntityCfg("robot", joint_names=ALL_CONTROLLED_JOINT_NAMES)},
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=OBS_JOINT_NAMES, preserve_order=True)},
         )
 
         joint_vel = ObsTerm(
             func=mdp.joint_vel_rel,
-            params={"asset_cfg": SceneEntityCfg("robot", joint_names=ALL_CONTROLLED_JOINT_NAMES)},
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=OBS_JOINT_NAMES, preserve_order=True)},
         )
 
         actions = ObsTerm(func=mdp.last_action)

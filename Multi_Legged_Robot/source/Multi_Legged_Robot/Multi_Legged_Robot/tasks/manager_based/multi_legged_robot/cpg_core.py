@@ -325,6 +325,8 @@ class GaitCPG:
         self.gait_off = torch.stack([t(GAIT_PHASES[g]) for g in GAIT_NAMES])   # (G, L)
         self.gait_duty = t([GAIT_DUTY[g] for g in GAIT_NAMES])                  # (G,)
         self.gait_freq = t([getattr(params, f"freq_{g}") for g in GAIT_NAMES])               # (G,)
+        # gait 별 최대 속도 [m/s] = 2 * stride_max * f / duty  (보폭 상한에서 나온다)
+        self.gait_cap = 2.0 * params.stride_max * self.gait_freq / self.gait_duty             # (G,)
         g0 = GAIT_NAMES.index(initial_gait)
 
         N, L = self.N, self.L
@@ -398,6 +400,26 @@ class GaitCPG:
         vx = cmd[:, 0:1] - cmd[:, 2:3] * y
         vy = cmd[:, 1:2] + cmd[:, 2:3] * x
         return torch.stack([vx, vy], dim=-1)
+
+    def speed_cap(self) -> torch.Tensor:
+        """지금 낼 수 있는 다리별 최대 발 속도 (N,) [m/s].
+
+        전환 중에는 출발 gait 와 도착 gait 중 작은 값을 쓴다. 전환이 끝나기 전에는
+        느린 쪽 gait 의 속도까지만 확실히 낼 수 있기 때문이다.
+        """
+        cap_to = self.gait_cap[self.gait_cur]
+        cap_from = 2.0 * self.p.stride_max * self.freq_from / self.duty_from
+        return torch.where(self.blend < 1.0, torch.minimum(cap_from, cap_to), cap_to)
+
+    def command_scale(self, cmd: torch.Tensor) -> torch.Tensor:
+        """명령 (N,3) 을 지금 gait 가 낼 수 있는 속도 안으로 줄이는 배율 (N,), 1 이하.
+
+        기준은 몸통 속도가 아니라 가장 빠른 다리의 요구 속도 (v + w x r) 다. 회전 명령이
+        섞이면 바깥쪽 다리가 더 빨리 움직여야 하므로 몸통 속도만 보면 부족하다.
+        vx, vy, wz 를 같은 배율로 줄여 진행 방향과 곡률은 유지한다.
+        """
+        speed = torch.norm(self.leg_demand(cmd), dim=-1).amax(dim=1)
+        return torch.clamp(self.speed_cap() / speed.clamp_min(1e-9), max=1.0)
 
     def step(self, dt: float, cmd: torch.Tensor):
         """한 물리 스텝. cmd (N,3) = [vx, vy, wz] base 기준.
@@ -481,8 +503,16 @@ class SelectorParams:
     up_tripod: float = 0.19      # ripple -> tripod
     hysteresis: float = 0.02
     rough_threshold: float = 0.025  # 평면 제거 후 높이 스캔 표준편차 [m] (격자 ~6 cm 이상)
+    # 거칠기 값은 격자/계단 위에서 기준 근처 (중앙값 0.025~0.035) 를 오르내린다. 그대로 쓰면
+    # 걸음새가 2 초마다 오갔다 (전환의 30 % 가 3 초 안에 되돌아감). 그래서
+    #   1) 지수이동평균으로 고르고 (시정수 rough_tau)
+    #   2) 험지 판정에 히스테리시스를 둔다 (기준 + h 를 넘어야 험지, 기준 - h 밑이어야 평지)
+    rough_tau: float = 1.0          # [s]
+    rough_hysteresis: float = 0.005  # [m]
     decide_period: float = 0.5      # 결정 주기 [s]
-    min_dwell: float = 1.5          # 한 gait 최소 유지 시간 [s]
+    # 한 gait 최소 유지 시간 [s]. 전환 블렌딩이 2.0 s 걸리므로 그보다 길어야
+    # 전환이 끝난 걸음새로 실제로 걷는 구간이 생긴다 (1.5 -> 3.0).
+    min_dwell: float = 3.0
     threshold_jitter: float = 0.0   # 학습 시 env 별 임계값 흔들기 [m/s]
 
 
@@ -502,33 +532,54 @@ class GaitSelector:
         self.timer = torch.zeros(num_envs, device=device, dtype=dtype)
         self.dwell = torch.full((num_envs,), 1e3, device=device, dtype=dtype)
         self.jitter = torch.zeros(num_envs, device=device, dtype=dtype)
+        self.rough_f = torch.zeros(num_envs, device=device, dtype=dtype)      # 평활화한 거칠기
+        self.is_rough = torch.zeros(num_envs, device=device, dtype=torch.bool)
 
     def reset(self, env_ids):
         ids = slice(None) if env_ids is None else env_ids
         self.timer[ids] = 0.0
         self.dwell[ids] = 1e3
+        self.rough_f[ids] = 0.0
+        self.is_rough[ids] = False
         if self.p.threshold_jitter > 0.0:
             n = self.jitter[ids].numel()
             self.jitter[ids] = (torch.rand(n, device=self.jitter.device) * 2 - 1) * self.p.threshold_jitter
 
-    def desired(self, speed: torch.Tensor, rough: torch.Tensor, cur: torch.Tensor) -> torch.Tensor:
+    def update_roughness(self, dt: float, rough: torch.Tensor, first=None) -> torch.Tensor:
+        """거칠기를 고르고 히스테리시스를 걸어 험지 여부 (N,) bool 을 갱신한다."""
+        p = self.p
+        a = dt / (p.rough_tau + dt)
+        self.rough_f = self.rough_f + a * (rough - self.rough_f)
+        if first is not None:
+            # 리셋 직후에는 지금 값으로 바로 정한다 (0 에서 서서히 올라오지 않게)
+            self.rough_f = torch.where(first, rough, self.rough_f)
+            self.is_rough = torch.where(first, rough > p.rough_threshold, self.is_rough)
+        self.is_rough = torch.where(self.is_rough,
+                                    self.rough_f > p.rough_threshold - p.rough_hysteresis,
+                                    self.rough_f > p.rough_threshold + p.rough_hysteresis)
+        return self.is_rough
+
+    def desired(self, speed: torch.Tensor, is_rough: torch.Tensor, cur: torch.Tensor) -> torch.Tensor:
         p = self.p
         j = self.jitter
         # 히스테리시스: 현재보다 위로 가려면 +h, 아래로 가려면 -h
         up_r = p.up_ripple + j + torch.where(cur >= 1, -p.hysteresis, p.hysteresis)
         up_t = p.up_tripod + j + torch.where(cur >= 2, -p.hysteresis, p.hysteresis)
         g = (speed > up_r).long() + (speed > up_t).long()
-        # 거친 지형이면 한 단계 낮춘다 (그 gait 상한의 90% 안일 때만)
+        # 거친 지형이면 한 단계 낮춘다 (그 gait 상한의 90% 안일 때만).
+        # 이미 낮은 gait 에 있으면 90% 까지 머물고, 새로 낮추려면 2h 만큼 더 느려야 한다.
+        # 이 여유가 없으면 낮추는 기준과 올리는 기준이 같은 속도가 되어 그 근처에서 오간다.
         lower = (g - 1).clamp(min=0)
-        can_lower = speed < 0.9 * self.cap[lower]
-        g = torch.where((rough > p.rough_threshold) & can_lower & (g > 0), lower, g)
+        margin = torch.where(cur <= lower, torch.zeros_like(speed), torch.full_like(speed, 2.0 * p.hysteresis))
+        can_lower = speed < 0.9 * self.cap[lower] - margin
+        g = torch.where(is_rough & can_lower & (g > 0), lower, g)
         return g
 
     def step(self, dt: float, speed, rough, cur, first=None):
         """반환: 요청할 gait (N,), 즉시 적용 마스크 (N,)."""
         self.timer += dt
         self.dwell += dt
-        want = self.desired(speed, rough, cur)
+        want = self.desired(speed, self.update_roughness(dt, rough, first), cur)
         decide = self.timer >= self.p.decide_period
         self.timer = torch.where(decide, torch.zeros_like(self.timer), self.timer)
         nxt = cur + torch.sign(want - cur)                     # 인접 gait 로만
